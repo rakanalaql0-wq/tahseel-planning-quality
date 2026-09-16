@@ -79,7 +79,7 @@ test('يرفض كلمة المرور الخاطئة', async () => {
 test('كل شاشات البرنامج تُفتح لمدير النظام', async () => {
   const cookie = await login('admin');
   const tabs = ['', '/metric', '/sessions', '/students', '/attendance', '/plan', '/teachers',
-    '/activities', '/surveys', '/complaints', '/discipline', '/continuity', '/actions',
+    '/activities', '/surveys', '/impact', '/complaints', '/discipline', '/continuity', '/actions',
     '/team', '/audit', '/close'];
   for (const tab of tabs) {
     const res = await fetchAs(cookie, `/programs/1${tab}`);
@@ -104,13 +104,13 @@ test('إجمالي المقياس يظهر 300 درجة في شاشة إدارة
 test('كل دور يرى مهامه فقط', async () => {
   const supervisor = await login('supervisor');
   const body = await (await fetchAs(supervisor, '/tasks')).text();
-  assert.match(body, /تهيئة القاعة|جاهزية التجهيزات|سلامة المرافق/, 'المشرف يرى مهام البيئة');
-  assert.doesNotMatch(body, /مناسبة المعلم/, 'المشرف لا يرى مهام الجودة العلمية');
+  assert.match(body, /تهيئة القاعة|جاهزية التجهيزات|ملاءمة القاعة|نظافة القاعات/, 'المشرف يرى مهام البيئة');
+  assert.doesNotMatch(body, /مناسبة المعلم|الزيارة الصفية/, 'المشرف لا يرى مهام الجودة العلمية');
 
   const academic = await login('academic');
   const academicBody = await (await fetchAs(academic, '/tasks')).text();
-  assert.match(academicBody, /المحتوى العلمي|مناسبة المعلم/);
-  assert.doesNotMatch(academicBody, /الضيافة/);
+  assert.match(academicBody, /المحتوى العلمي|مناسبة المعلم|الزيارة الصفية/);
+  assert.doesNotMatch(academicBody, /الضيافة|نظافة القاعات/);
 });
 
 test('المشرف لا يملك صلاحية إنشاء برنامج', async () => {
@@ -181,7 +181,7 @@ test('اعتماد التحقق يحسب النتيجة وينشئ إجراءً 
   assert.match(audit, /verification.submit/);
 });
 
-test('دورة الاستبانة: توليد، فتح، تعبئة عامة، إغلاق واحتساب النتيجة', async () => {
+test('دورة الاستبانة: توليد، فتح بروابط فردية، تعبئة، إغلاق واحتساب النتيجة', async () => {
   const cookie = await login('quality');
   const surveysBody = await (await fetchAs(cookie, '/programs/1/surveys')).text();
   const taskId = /name="task_id" value="(\d+)"/.exec(surveysBody)?.[1];
@@ -197,31 +197,103 @@ test('دورة الاستبانة: توليد، فتح، تعبئة عامة، �
 
   await fetchAs(cookie, `${surveyPath}/open`, { method: 'POST' });
   const page = await (await fetchAs(cookie, surveyPath)).text();
-  const token = /\/s\/([A-Za-z0-9_-]+)/.exec(page)?.[1];
-  assert.ok(token, 'لم يُنشأ رابط التوزيع');
 
-  // الصفحة العامة متاحة دون تسجيل دخول
-  const publicPage = await fetch(`${BASE}/s/${token}`);
-  assert.equal(publicPage.status, 200);
-  const publicBody = await publicPage.text();
-  const qIds = [...new Set([...publicBody.matchAll(/name="q_(\d+)"/g)].map((m) => m[1]))];
-  assert.ok(qIds.length >= 3, 'الاستبانة يجب أن تحتوي أسئلة من مكتبة الأسئلة');
+  // رابط عام واحد لم يعد موجودًا — بدلًا منه رابط فردي لكل طالب
+  const tokens = [...new Set([...page.matchAll(/\/r\/([A-Za-z0-9_-]{10,})/g)].map((m) => m[1]))];
+  assert.ok(tokens.length >= 20, `يجب توليد رابط لكل طالب نشط، وُلّد ${tokens.length}`);
 
-  for (const value of ['5', '3']) {
+  const fill = async (tok) => {
+    const form = await fetch(`${BASE}/r/${tok}`);
+    assert.equal(form.status, 200);
+    const formBody = await form.text();
+    const qIds = [...new Set([...formBody.matchAll(/name="q_(\d+)"/g)].map((m) => m[1]))];
+    assert.ok(qIds.length >= 3, 'الاستبانة يجب أن تحتوي أسئلة من مكتبة الأسئلة');
     const answers = new URLSearchParams();
-    for (const q of qIds) answers.set(`q_${q}`, value);
-    const submitted = await fetch(`${BASE}/s/${token}`, {
+    for (const q of qIds) answers.set(`q_${q}`, '4'); // المتوسط 4 ⇒ 75% وفق BR-03
+    return fetch(`${BASE}/r/${tok}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
       body: answers,
     });
-    assert.equal(submitted.status, 200);
-    assert.match(await submitted.text(), /شكرًا لك/);
-  }
+  };
+
+  const first = await fill(tokens[0]);
+  assert.equal(first.status, 200);
+  assert.match(await first.text(), /شكرًا لك/);
+
+  // الرابط يُستخدم مرة واحدة فقط
+  const repeat = await fetch(`${BASE}/r/${tokens[0]}`);
+  assert.match(await repeat.text(), /سبق أن أجبت/);
+
+  // استجابة واحدة من 22 = عينة غير كافية
+  const weak = await (await fetchAs(cookie, surveyPath)).text();
+  assert.match(weak, /عينة غير كافية/);
+
+  // تعبئة ما يكفي لتجاوز 70%
+  const needed = Math.ceil(tokens.length * 0.7);
+  for (const tok of tokens.slice(1, needed)) await fill(tok);
+  const strong = await (await fetchAs(cookie, surveyPath)).text();
+  assert.match(strong, /عينة كافية/);
+  assert.doesNotMatch(strong, /عينة غير كافية/);
 
   const closed = await fetchAs(cookie, `${surveyPath}/close`, { method: 'POST' });
   const flash = decodeURIComponent(closed.headers.getSetCookie().find((c) => c.startsWith('tpq_flash=')) || '');
   assert.match(flash, /75/, 'المتوسط 4 يعطي 75% وفق BR-03');
+});
+
+test('رابط استبانة غير صحيح يُرفض', async () => {
+  const res = await fetch(`${BASE}/r/not-a-real-token`);
+  assert.equal(res.status, 404);
+  assert.match(await res.text(), /الرابط غير صحيح/);
+});
+
+test('قياس الأثر: إضافة أداة وإدخال الدرجات دون المساس بمقياس الـ300', async () => {
+  const cookie = await login('academic');
+  const before = await (await fetchAs(cookie, '/programs/1/metric')).text();
+  const beforeScore = /الدرجة من 300<\/div>/.test(before) ? before : before;
+
+  const created = await fetchAs(cookie, '/programs/1/impact', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      name: 'اختبار عملي للتلاوة', kind: 'practical', max_score: '20',
+      mastery_pct: '75', applied_at: '2026-09-01',
+    }),
+  });
+  assert.equal(created.status, 302);
+  const toolPath = created.headers.get('location');
+  assert.match(toolPath, /^\/impact\/tool\/\d+$/);
+
+  const toolPage = await (await fetchAs(cookie, toolPath)).text();
+  const studentIds = [...new Set([...toolPage.matchAll(/name="score_(\d+)"/g)].map((m) => m[1]))];
+  assert.ok(studentIds.length > 0, 'شاشة إدخال الدرجات تعرض الطلاب');
+
+  const scores = new URLSearchParams();
+  studentIds.forEach((id, i) => scores.set(`score_${id}`, i % 2 === 0 ? '18' : '12'));
+  const saved = await fetchAs(cookie, `${toolPath}/results`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: scores,
+  });
+  assert.equal(saved.status, 302);
+
+  const impactPage = await (await fetchAs(cookie, '/programs/1/impact')).text();
+  assert.match(impactPage, /مكسب التعلم المعياري/);
+  assert.match(impactPage, /مستقل تمامًا عن مقياس الجودة/);
+
+  // مقياس الـ300 لم يتأثر: لا يظهر أي مؤشر أثر في شجرة المقياس
+  const after = await (await fetchAs(cookie, '/programs/1/metric')).text();
+  assert.doesNotMatch(after, /اختبار عملي للتلاوة/, 'قياس الأثر لا يظهر داخل شجرة المقياس');
+  assert.equal(after.includes('/ 300'), beforeScore.includes('/ 300'));
+});
+
+test('تصدير قياس الأثر منفصل عن تقرير المقياس', async () => {
+  const cookie = await login('manager');
+  const res = await fetchAs(cookie, '/programs/1/impact.csv');
+  assert.equal(res.status, 200);
+  const text = await res.text();
+  assert.match(text, /مستقل عن مقياس الجودة/);
+  assert.match(text, /مكسب التعلم المعياري/);
 });
 
 test('المنصة تمنع الإقفال مع وجود نواقص وتعرضها بوضوح', async () => {

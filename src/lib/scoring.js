@@ -1,4 +1,5 @@
 import { all, get } from '../db/index.js';
+import { DEFAULT_MIN_RESPONSE_RATE } from '../db/framework.js';
 
 /**
  * محرك الحساب — البند 6 (قواعد الأعمال) من وثيقة التحليل.
@@ -77,10 +78,30 @@ function checklistResult(programId, indicatorId) {
   return { pct: sum / rows.length, done: rows.length };
 }
 
-/** نتيجة مؤشر استبانة: BR-03 مطبقة على متوسط أسئلة المؤشر. */
+/** الحد الأدنى المعتمد لنسبة الاستجابة في الاستبانات. */
+export function minResponseRate() {
+  const row = get("SELECT value FROM settings WHERE key = 'min_response_rate'");
+  const v = Number(row?.value);
+  return Number.isFinite(v) && v > 0 && v <= 100 ? v : DEFAULT_MIN_RESPONSE_RATE;
+}
+
+/** نسبة استجابة استبانة واحدة مقابل عدد المستهدفين وقت الفتح. */
+export function responseRate(survey, responses) {
+  const target = Number(survey.target_count || 0);
+  if (!target) return null;
+  return Math.min(100, (Number(responses) / target) * 100);
+}
+
+/**
+ * نتيجة مؤشر استبانة: BR-03 مطبقة على متوسط أسئلة المؤشر.
+ * الاستبانة التي تقل نسبة استجابتها عن الحد المعتمد تُوسم «عينة غير كافية»:
+ * تظهر نتيجتها للاطلاع، لكنها لا تُحتسب ضمن اكتمال القياس.
+ */
 function surveyResult(programId, indicatorId) {
   const rows = all(
-    `SELECT s.id AS survey_id, AVG(a.value) AS avg_value, COUNT(a.id) AS answers
+    `SELECT s.id AS survey_id, s.title, s.target_count,
+            AVG(a.value) AS avg_value, COUNT(a.id) AS answers,
+            (SELECT COUNT(*) FROM survey_responses r WHERE r.survey_id = s.id) AS responses
        FROM surveys s
        JOIN survey_questions q ON q.survey_id = s.id AND q.indicator_id = ?
        JOIN survey_answers a ON a.question_id = q.id
@@ -88,11 +109,29 @@ function surveyResult(programId, indicatorId) {
       GROUP BY s.id`,
     indicatorId, programId,
   );
-  if (!rows.length) return { pct: null, done: 0, responses: 0 };
-  const pcts = rows.map((r) => likertToPct(r.avg_value)).filter((v) => v !== null);
-  if (!pcts.length) return { pct: null, done: 0, responses: 0 };
-  const responses = rows.reduce((acc, r) => acc + Number(r.answers), 0);
-  return { pct: pcts.reduce((a, b) => a + b, 0) / pcts.length, done: rows.length, responses };
+  if (!rows.length) return { pct: null, done: 0, responses: 0, insufficient: [] };
+
+  const threshold = minResponseRate();
+  const scored = [];
+  const insufficient = [];
+  let responses = 0;
+  for (const r of rows) {
+    const pct = likertToPct(r.avg_value);
+    if (pct === null) continue;
+    responses += Number(r.responses);
+    const rate = responseRate(r, r.responses);
+    const enough = rate !== null && rate >= threshold;
+    scored.push({ pct, enough });
+    if (!enough) insufficient.push({ title: r.title, rate, responses: Number(r.responses), target: Number(r.target_count || 0) });
+  }
+  if (!scored.length) return { pct: null, done: 0, responses: 0, insufficient };
+
+  return {
+    pct: scored.reduce((a, b) => a + b.pct, 0) / scored.length,
+    done: scored.filter((s) => s.enough).length, // الاكتمال يحتسب العينات الكافية فقط
+    responses,
+    insufficient,
+  };
 }
 
 /** نتيجة مؤشر سجل تشغيلي بحسب قاعدة الحساب المعرّفة. */
@@ -126,6 +165,24 @@ function recordResult(programId, indicator, program) {
         return Number(att?.c) ? { pct: 100, done: 1 } : { pct: null, done: 0 };
       }
       return { pct: (Number(r.documented) / Number(r.total)) * 100, done: 1 };
+    }
+    case 'followup_sessions': {
+      const r = get(
+        `SELECT COUNT(*) AS total,
+                SUM(CASE WHEN followup_at IS NOT NULL AND trim(followup_at) <> '' THEN 1 ELSE 0 END) AS held
+           FROM discipline_cases WHERE program_id = ?`,
+        programId,
+      );
+      if (!r) return { pct: null, done: 0 };
+      // لا حالات تستدعي جلسة متابعة = التزام كامل، بشرط وجود سجل حضور يثبت المتابعة.
+      if (!Number(r.total)) {
+        const att = get(
+          'SELECT COUNT(*) AS c FROM attendance at JOIN sessions s ON s.id = at.session_id WHERE s.program_id = ?',
+          programId,
+        );
+        return Number(att?.c) ? { pct: 100, done: 1 } : { pct: null, done: 0 };
+      }
+      return { pct: (Number(r.held) / Number(r.total)) * 100, done: 1 };
     }
     case 'complaint_sla': {
       const r = get(
@@ -186,6 +243,7 @@ export function computeIndicator(program, indicator, ctx) {
     weight: Number(indicator.weight),
     sample_label: samplePlanLabel(indicator),
     responses: res.responses ?? null,
+    insufficient: res.insufficient ?? [],
   };
 }
 

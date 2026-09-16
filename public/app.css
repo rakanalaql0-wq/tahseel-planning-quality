@@ -120,6 +120,12 @@ tr.axis-row td { background: #f6faf9; font-weight: 600; }
   direction: ltr; unicode-bidi: isolate;
 }
 
+/* الروابط والرموز اللاتينية: عزلها يمنع انتقال محارف مثل «_» إلى أول السطر */
+code {
+  direction: ltr; unicode-bidi: isolate; display: inline-block;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
 /* ------------------------------- العناصر ------------------------------- */
 
 .badge {

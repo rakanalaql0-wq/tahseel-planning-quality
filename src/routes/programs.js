@@ -137,7 +137,8 @@ function metricView(ctx, program) {
            <br><small class="muted">${esc(n.indicator.code)} · ${tool} · ${roleName(n.indicator.owner_role)} · ${esc(n.sample_label)}</small>`,
           `<span class="num">${fmtNum(n.earned)} / ${fmtNum(n.weight)}</span>`,
           progress(n.score_pct),
-          `${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small>`,
+          `${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small>
+           ${n.insufficient?.length ? `<br>${badge(`${n.insufficient.length} عينة غير كافية`, 'bad')}` : ''}`,
           n.indicator.tool === 'checklist'
             ? `<a class="btn sec small" href="/programs/${program.id}/indicator/${n.indicator.id}">السجل</a>`
             : n.indicator.tool === 'survey'

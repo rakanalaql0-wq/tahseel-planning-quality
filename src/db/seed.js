@@ -1,14 +1,40 @@
 import { existsSync, rmSync } from 'node:fs';
-import { get, run, tx, getDb, resetDbHandle, DB_PATH } from './index.js';
-import { FRAMEWORK, QUESTION_BANK } from './framework.js';
+import { all, get, run, tx, getDb, resetDbHandle, DB_PATH } from './index.js';
+import { FRAMEWORK, QUESTION_BANK, SCALE_VERSION, DEFAULT_MIN_RESPONSE_RATE } from './framework.js';
 import { hashPassword } from '../lib/auth.js';
 import { addDays, today } from '../lib/util.js';
 import { syncProgramTasks, scheduleMainActivityTask, refreshNotifications } from '../lib/scheduler.js';
 
 const DEFAULT_PASSWORD = process.env.TPQ_SEED_PASSWORD || 'Tahseel@2026';
 
+/**
+ * يتعامل مع تغيّر إصدار المقياس.
+ * إعادة البناء تحذف المؤشرات القديمة — ومعها قياساتها بحكم التتالي —
+ * لذلك تُرفض تلقائيًا إذا كانت هناك قياسات معتمدة، ويُطلب تدخل صريح.
+ */
+function handleVersionChange() {
+  const stored = get("SELECT value FROM settings WHERE key = 'scale_version'")?.value;
+  if (!stored || stored === SCALE_VERSION) return;
+
+  const submitted = Number(get("SELECT COUNT(*) c FROM verifications WHERE status = 'submitted'")?.c || 0);
+  const responses = Number(get('SELECT COUNT(*) c FROM survey_responses')?.c || 0);
+  if (submitted || responses) {
+    throw new Error(
+      `إصدار المقياس المخزّن (${stored}) يختلف عن إصدار الكود (${SCALE_VERSION})، `
+      + `وتوجد قياسات معتمدة (${submitted} تحققًا و${responses} استجابة).\n`
+      + 'إعادة بناء المقياس ستحذف هذه القياسات. صدّر تقاريرك أولًا ثم شغّل: npm run reset',
+    );
+  }
+
+  console.log(`ترقية بنية المقياس من ${stored} إلى ${SCALE_VERSION} (لا توجد قياسات معتمدة).`);
+  run('DELETE FROM question_bank');
+  run('DELETE FROM metric_sections'); // يتتالى على المحاور والمؤشرات وعناصر التحقق والمهام
+  run("UPDATE settings SET value = ?, updated_at = datetime('now') WHERE key = 'scale_version'", SCALE_VERSION);
+}
+
 /** يزرع بنية المقياس (أقسام/محاور/مؤشرات/عناصر) إن لم تكن موجودة. */
 export function seedFramework() {
+  handleVersionChange();
   let sSort = 0;
   for (const section of FRAMEWORK) {
     sSort += 1;
@@ -60,9 +86,10 @@ export function seedFramework() {
       q.code, q.text, ind?.id ?? null, q.point, idx + 1);
   });
 
-  run("INSERT OR IGNORE INTO settings (key, value) VALUES ('scale_version', 'v1-300')");
+  run("INSERT OR IGNORE INTO settings (key, value) VALUES ('scale_version', ?)", SCALE_VERSION);
   run("INSERT OR IGNORE INTO settings (key, value) VALUES ('org_name', 'جمعية تحصيل المعرفة')");
   run("INSERT OR IGNORE INTO settings (key, value) VALUES ('default_sla_days', '5')");
+  run("INSERT OR IGNORE INTO settings (key, value) VALUES ('min_response_rate', ?)", String(DEFAULT_MIN_RESPONSE_RATE));
 }
 
 function ensureUser({ full_name, username, global_role = 'none', password = DEFAULT_PASSWORD }) {
@@ -167,6 +194,39 @@ export function seedDemoProgram(users) {
     program.id, 'C-001', 'تأخر بدء اللقاء الرابع',
     'تأخر بدء اللقاء عن الموعد المعلن بخمس عشرة دقيقة.',
     addDays(today(), 2), users.officer.id);
+
+  // حالة متعثرة مع جلسة متابعة موثّقة (تغذي مؤشر جلسات المتابعة)
+  const firstStudent = get('SELECT id FROM students WHERE program_id = ? ORDER BY id LIMIT 1', program.id);
+  run(`INSERT INTO discipline_cases (program_id, student_id, kind, description, action, channel, status, followup_at, followup_note, created_by)
+       VALUES (?, ?, 'attendance', ?, ?, 'اتصال هاتفي', 'followed', ?, ?, ?)`,
+    program.id, firstStudent?.id ?? null,
+    'غياب متكرر عن اللقاءات الثلاثة الأخيرة.',
+    'تواصل مع الطالب وتحديد جلسة متابعة.',
+    addDays(today(), -4), 'أفاد بظرف صحي، واتُّفق على خطة تعويض.', users.officer.id);
+
+  // أدوات قياس الأثر: اختبار قبلي وبعدي بنفس الدرجة العظمى
+  run(`INSERT INTO impact_tools (program_id, name, kind, max_score, mastery_pct, applied_at, notes, created_by)
+       VALUES (?, ?, 'pre', 50, 80, ?, ?, ?)`,
+    program.id, 'الاختبار القبلي لأحكام التلاوة', addDays(start, 1),
+    'يقيس مستوى الطالب في أحكام النون الساكنة والمدود قبل بدء البرنامج.', users.academic.id);
+  run(`INSERT INTO impact_tools (program_id, name, kind, max_score, mastery_pct, applied_at, notes, created_by)
+       VALUES (?, ?, 'post', 50, 80, ?, ?, ?)`,
+    program.id, 'الاختبار البعدي لأحكام التلاوة', addDays(today(), -2),
+    'نفس محتوى الاختبار القبلي لقياس الفرق.', users.academic.id);
+
+  const preTool = get("SELECT id FROM impact_tools WHERE program_id = ? AND kind = 'pre'", program.id);
+  const postTool = get("SELECT id FROM impact_tools WHERE program_id = ? AND kind = 'post'", program.id);
+  const active = all("SELECT id FROM students WHERE program_id = ? AND status <> 'withdrawn' ORDER BY id", program.id);
+  active.forEach((st, idx) => {
+    const pre = 12 + (idx % 9);              // 12..20 من 50
+    const post = Math.min(50, pre + 18 + (idx % 7)); // تحسّن متفاوت
+    run('INSERT INTO impact_results (tool_id, student_id, score, recorded_by) VALUES (?, ?, ?, ?)',
+      preTool.id, st.id, pre, users.academic.id);
+    if (idx < active.length - 2) { // طالبان لم يُقاسا بعديًا لإظهار نقص التغطية
+      run('INSERT INTO impact_results (tool_id, student_id, score, recorded_by) VALUES (?, ?, ?, ?)',
+        postTool.id, st.id, post, users.academic.id);
+    }
+  });
 
   syncProgramTasks(program.id);
   const activity = get('SELECT id FROM activities WHERE program_id = ? AND is_main = 1', program.id);

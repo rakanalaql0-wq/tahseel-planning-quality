@@ -18,7 +18,25 @@ export function getDb() {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(readFileSync(join(here, 'schema.sql'), 'utf8'));
+  migrate(db);
   return db;
+}
+
+/** أعمدة أُضيفت بعد الإصدار الأول — تُضاف للقواعد القائمة دون فقدان بيانات. */
+const COLUMN_MIGRATIONS = [
+  ['surveys', 'target_count', 'INTEGER'],          // عدد المستهدفين وقت فتح الاستبانة
+  ['surveys', 'is_open_link', 'INTEGER NOT NULL DEFAULT 0'],
+  ['discipline_cases', 'followup_at', 'TEXT'],     // تاريخ جلسة المتابعة
+  ['discipline_cases', 'followup_note', 'TEXT'],
+];
+
+function migrate(handle) {
+  for (const [table, column, type] of COLUMN_MIGRATIONS) {
+    const cols = handle.prepare(`PRAGMA table_info(${table})`).all();
+    if (!cols.length) continue;
+    if (cols.some((c) => c.name === column)) continue;
+    handle.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+  }
 }
 
 /** يعيد فتح قاعدة بيانات جديدة (يُستخدم في الاختبارات). */

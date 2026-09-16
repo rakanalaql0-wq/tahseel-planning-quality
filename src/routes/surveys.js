@@ -1,10 +1,10 @@
 import { all, get, run } from '../db/index.js';
-import { esc, fmtDate, fmtNum, token, int } from '../lib/util.js';
-import { table, section, statusBadge, badge, progress, field, input, textarea, statCard } from '../views/ui.js';
+import { esc, fmtDate, fmtNum, token, int, toCsv } from '../lib/util.js';
+import { table, section, statusBadge, badge, progress, input, textarea, statCard } from '../views/ui.js';
 import { bare } from '../views/layout.js';
-import { html } from '../lib/http.js';
+import { html, send } from '../lib/http.js';
 import { can } from '../lib/roles.js';
-import { likertToPct } from '../lib/scoring.js';
+import { likertToPct, minResponseRate, responseRate } from '../lib/scoring.js';
 import { audit } from '../lib/audit.js';
 import { refreshNotifications } from '../lib/scheduler.js';
 import { LIKERT } from '../db/framework.js';
@@ -22,8 +22,9 @@ function pointForTask(indicator, task) {
   return 'end';
 }
 
-/** نتائج استبانة: متوسط كل سؤال محوّلًا إلى نسبة (BR-03). */
+/** نتائج استبانة: متوسط كل سؤال محوّلًا إلى نسبة (BR-03) + نسبة الاستجابة. */
 function surveyResults(surveyId) {
+  const survey = get('SELECT * FROM surveys WHERE id = ?', surveyId);
   const questions = all(
     `SELECT q.*, i.name AS indicator_name,
             AVG(a.value) AS avg_value, COUNT(a.id) AS answers
@@ -37,7 +38,24 @@ function surveyResults(surveyId) {
   const overall = withData.length
     ? withData.reduce((s, q) => s + likertToPct(q.avg_value), 0) / withData.length
     : null;
-  return { questions, responses, overall };
+  const threshold = minResponseRate();
+  const rate = survey ? responseRate(survey, responses) : null;
+  return {
+    questions,
+    responses,
+    overall,
+    rate,
+    threshold,
+    target: Number(survey?.target_count || 0),
+    sufficient: rate !== null && rate >= threshold,
+  };
+}
+
+/** وسم «عينة كافية / غير كافية». */
+function sampleBadge(r) {
+  if (r.rate === null) return badge('لم تُفتح بعد', 'muted');
+  if (r.sufficient) return badge(`عينة كافية — ${fmtNum(r.rate)}%`, 'good');
+  return badge(`عينة غير كافية — ${fmtNum(r.rate)}% (المطلوب ${fmtNum(r.threshold)}%)`, 'bad');
 }
 
 export default function register(router) {
@@ -46,8 +64,7 @@ export default function register(router) {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const { program } = loaded;
     const rows = all(
-      `SELECT s.*, i.name AS indicator_name,
-              (SELECT COUNT(*) FROM survey_responses r WHERE r.survey_id = s.id) AS responses
+      `SELECT s.*, i.name AS indicator_name
          FROM surveys s
          LEFT JOIN tasks t ON t.id = s.task_id
          LEFT JOIN indicators i ON i.id = t.indicator_id
@@ -59,17 +76,21 @@ export default function register(router) {
           AND NOT EXISTS (SELECT 1 FROM surveys s WHERE s.task_id = t.id)
         ORDER BY t.due_date`, program.id,
     );
+    const threshold = minResponseRate();
+
     ctx.render('الاستبانات', programHead(program, 'surveys') + `
-      ${section('الاستبانات', table(['الاستبانة', 'نقطة القياس', 'المؤشر', 'الحالة', 'الاستجابات', 'النتيجة', ''],
+      ${section('الاستبانات', table(['الاستبانة', 'نقطة القياس', 'المؤشر', 'الحالة', 'الاستجابات', 'كفاية العينة', 'النتيجة', ''],
         rows.map((s) => {
           const r = surveyResults(s.id);
           return [
             esc(s.title), esc(POINT_LABEL[s.point] || s.point), esc(s.indicator_name || '—'),
             statusBadge(s.status === 'open' ? 'in_progress' : s.status === 'closed' ? 'done' : 'draft'),
-            `<span class="num">${s.responses}</span>`,
+            `<span class="num">${r.responses}${r.target ? ` / ${r.target}` : ''}</span>`,
+            sampleBadge(r),
             progress(r.overall), `<a class="btn sec small" href="/surveys/${s.id}">فتح</a>`,
           ];
-        }), { empty: 'لم تُنشأ استبانات بعد.' }))}
+        }), { empty: 'لم تُنشأ استبانات بعد.' }),
+        { actions: badge(`الحد الأدنى المعتمد لنسبة الاستجابة: ${fmtNum(threshold)}%`, 'muted') })}
       ${section('استبانات مجدولة بانتظار التوليد', table(['المهمة', 'المؤشر', 'الاستحقاق', ''],
         pending.map((t) => [
           esc(t.title), esc(t.indicator_name), fmtDate(t.due_date),
@@ -132,35 +153,64 @@ export default function register(router) {
     const editable = (can(perms, 'survey.manage.teacher') || can(perms, 'survey.manage.experience') || can(perms, '*'))
       && survey.program_status !== 'closed';
     const r = surveyResults(survey.id);
-    const link = `${ctx.url.origin}/s/${survey.token}`;
+    const invites = all(
+      `SELECT v.*, st.full_name FROM survey_invites v
+         JOIN students st ON st.id = v.student_id
+        WHERE v.survey_id = ? ORDER BY st.full_name`, survey.id,
+    );
+    const eligible = Number(get(
+      "SELECT COUNT(*) c FROM students WHERE program_id = ? AND status <> 'withdrawn'", survey.program_id,
+    )?.c || 0);
 
-    ctx.render(survey.title, `
+    const linkFor = (inv) => `${ctx.url.origin}/r/${inv.token}`;
+
+    return ctx.render(survey.title, `
       <div class="crumbs"><a href="/programs/${survey.program_id}/surveys">${esc(survey.program_name)} — الاستبانات</a></div>
       <div class="pagehead"><div>
         <h1>${esc(survey.title)}</h1>
         <p class="meta">${esc(POINT_LABEL[survey.point] || survey.point)} ·
           ${survey.status === 'open' ? badge('مفتوحة للتوزيع', 'good') : survey.status === 'closed' ? badge('مغلقة', 'muted') : badge('مسودة', 'warn')}
-          · ${r.responses} استجابة</p>
+          · ${sampleBadge(r)}</p>
       </div></div>
 
       <div class="stats">
-        ${statCard({ label: 'الاستجابات', value: r.responses })}
+        ${statCard({ label: 'الاستجابات', value: r.target ? `${r.responses} / ${r.target}` : r.responses })}
+        ${statCard({
+          label: 'نسبة الاستجابة',
+          value: r.rate === null ? '—' : `${fmtNum(r.rate)}%`,
+          tone: r.rate === null ? '' : r.sufficient ? 'good' : 'bad',
+          sub: `الحد الأدنى المعتمد ${fmtNum(r.threshold)}%`,
+        })}
         ${statCard({ label: 'النتيجة (BR-03)', value: r.overall === null ? '—' : `${fmtNum(r.overall)}%`, tone: 'info', sub: '(المتوسط − 1) ÷ 4 × 100' })}
         ${statCard({ label: 'عدد الأسئلة', value: r.questions.length })}
       </div>
 
-      ${section('رابط التوزيع', survey.status === 'open'
-        ? `<p><code>${esc(link)}</code></p>
-           <p><button class="btn sec small" data-copy="${esc(link)}">نسخ الرابط</button>
-           <a class="btn sec small" href="/s/${esc(survey.token)}" target="_blank" rel="noopener">معاينة</a></p>
-           <p class="hint">الرابط عام ولا يتطلب تسجيل دخول؛ تُجمع الاستجابات دون ربطها بهوية الطالب.</p>`
-        : survey.status === 'draft'
-          ? '<p class="empty">الاستبانة مسودة — افتحها للتوزيع لتفعيل الرابط.</p>'
-          : '<p class="empty">الاستبانة مغلقة ولم تعد تستقبل استجابات.</p>')}
+      ${!r.sufficient && r.rate !== null ? `<div class="flash err">
+        <strong>عينة غير كافية.</strong> نسبة الاستجابة ${fmtNum(r.rate)}% أقل من الحد المعتمد ${fmtNum(r.threshold)}%.
+        النتيجة تُعرض للاطلاع، لكن هذا القياس <strong>لا يُحتسب ضمن اكتمال القياس</strong> ويظهر كقياس ناقص يمنع إقفال البرنامج.
+      </div>` : ''}
+
+      ${section('روابط التوزيع الفردية', survey.status === 'draft'
+        ? `<p class="empty">الاستبانة مسودة. عند فتحها للتوزيع يولّد النظام رابطًا فريدًا لكل طالب نشط
+             (${eligible} طالبًا حاليًا)، يُستخدم مرة واحدة فقط.</p>`
+        : invites.length ? `
+          <p class="hint">كل رابط خاص بطالب واحد ويُستخدم مرة واحدة. النظام يسجّل <strong>أن الطالب أجاب</strong>
+            فقط، ولا يربط إجابته باسمه إطلاقًا — فالسرية محفوظة والتكرار ممنوع.</p>
+          <p>
+            <button class="btn sec small" data-copy="${esc(invites.map(linkFor).join('\n'))}">نسخ كل الروابط</button>
+            <a class="btn sec small" href="/surveys/${survey.id}/invites.csv">تنزيل الروابط (Excel)</a>
+          </p>
+          ${table(['الطالب', 'الحالة', 'الرابط'], invites.map((inv) => [
+            esc(inv.full_name),
+            inv.used_at ? badge('أجاب', 'good') : badge('لم يُجب بعد', 'warn'),
+            `<code style="font-size:.74rem">${esc(linkFor(inv))}</code>
+             <button class="btn sec small" data-copy="${esc(linkFor(inv))}">نسخ</button>`,
+          ]), { cls: 'compact' })}`
+        : '<p class="empty">لا توجد روابط — لم يكن هناك طلاب نشطون وقت الفتح.</p>')}
 
       ${editable ? section('إدارة الاستبانة', `
         <div class="row-form">
-          ${survey.status !== 'open' && survey.status !== 'closed' ? `<form method="post" action="/surveys/${survey.id}/open" class="inline"><button class="btn">فتح للتوزيع</button></form>` : ''}
+          ${survey.status === 'draft' ? `<form method="post" action="/surveys/${survey.id}/open" class="inline"><button class="btn">فتح للتوزيع وتوليد الروابط</button></form>` : ''}
           ${survey.status === 'open' ? `<form method="post" action="/surveys/${survey.id}/close" class="inline" data-confirm="إغلاق الاستبانة واعتماد النتيجة؟"><button class="btn">إغلاق واعتماد النتيجة</button></form>` : ''}
         </div>
         ${survey.status === 'draft' ? `
@@ -179,6 +229,27 @@ export default function register(router) {
         ]), { empty: 'لا توجد أسئلة.' }))}`, { active: '/programs' });
   });
 
+  router.get('/surveys/:sid/invites.csv', (ctx) => {
+    const survey = get('SELECT * FROM surveys WHERE id = ?', ctx.params.sid);
+    if (!survey) return ctx.notFound();
+    if (!canAccessProgram(ctx.user, survey.program_id)) return ctx.deny();
+    const invites = all(
+      `SELECT v.token, v.used_at, st.full_name, st.phone FROM survey_invites v
+         JOIN students st ON st.id = v.student_id WHERE v.survey_id = ? ORDER BY st.full_name`,
+      survey.id,
+    );
+    const csv = toCsv(
+      ['الطالب', 'الجوال', 'رابط الاستبانة', 'الحالة'],
+      invites.map((i) => [
+        i.full_name, i.phone || '', `${ctx.url.origin}/r/${i.token}`, i.used_at ? 'أجاب' : 'لم يُجب بعد',
+      ]),
+    );
+    return send(ctx.res, 200, csv, {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(`روابط-${survey.title}.csv`)}`,
+    });
+  });
+
   router.post('/surveys/:sid/questions', (ctx) => {
     const survey = get('SELECT * FROM surveys WHERE id = ?', ctx.params.sid);
     if (!survey) return ctx.notFound();
@@ -193,49 +264,80 @@ export default function register(router) {
     ctx.redirect(`/surveys/${survey.id}`, 'أُضيف السؤال.');
   });
 
+  /** الفتح يولّد رمزًا فريدًا لكل طالب نشط ويثبّت عدد المستهدفين. */
   router.post('/surveys/:sid/open', (ctx) => {
     const survey = get('SELECT * FROM surveys WHERE id = ?', ctx.params.sid);
     if (!survey) return ctx.notFound();
     if (!canAccessProgram(ctx.user, survey.program_id)) return ctx.deny();
+    if (survey.status !== 'draft') return ctx.redirect(`/surveys/${survey.id}`, 'الاستبانة ليست مسودة.', 'err');
+
     const count = Number(get('SELECT COUNT(*) c FROM survey_questions WHERE survey_id = ?', survey.id).c);
     if (!count) return ctx.redirect(`/surveys/${survey.id}`, 'لا يمكن فتح استبانة بلا أسئلة.', 'err');
-    run("UPDATE surveys SET status = 'open', opened_at = datetime('now') WHERE id = ?", survey.id);
-    audit({ user: ctx.user, action: 'survey.open', entityType: 'survey', entityId: survey.id, programId: survey.program_id, ip: ctx.ip });
-    ctx.redirect(`/surveys/${survey.id}`, 'فُتحت الاستبانة — وزّع الرابط على الطلاب.');
+
+    const students = all(
+      "SELECT id FROM students WHERE program_id = ? AND status <> 'withdrawn' ORDER BY full_name",
+      survey.program_id,
+    );
+    if (!students.length) {
+      return ctx.redirect(`/surveys/${survey.id}`,
+        'لا يوجد طلاب نشطون — سجّل الطلاب أولًا حتى يمكن قياس نسبة الاستجابة.', 'err');
+    }
+    for (const s of students) {
+      run('INSERT OR IGNORE INTO survey_invites (survey_id, student_id, token) VALUES (?, ?, ?)',
+        survey.id, s.id, token(18));
+    }
+    run("UPDATE surveys SET status = 'open', opened_at = datetime('now'), target_count = ? WHERE id = ?",
+      students.length, survey.id);
+    audit({ user: ctx.user, action: 'survey.open', entityType: 'survey', entityId: survey.id, programId: survey.program_id, after: { target_count: students.length }, ip: ctx.ip });
+    ctx.redirect(`/surveys/${survey.id}`, `فُتحت الاستبانة — وُلّد ${students.length} رابطًا فرديًا للتوزيع.`);
   });
 
   router.post('/surveys/:sid/close', (ctx) => {
     const survey = get('SELECT * FROM surveys WHERE id = ?', ctx.params.sid);
     if (!survey) return ctx.notFound();
     if (!canAccessProgram(ctx.user, survey.program_id)) return ctx.deny();
+    const r = surveyResults(survey.id);
     run("UPDATE surveys SET status = 'closed', closed_at = datetime('now') WHERE id = ?", survey.id);
     if (survey.task_id) {
       run("UPDATE tasks SET status = 'done', completed_at = datetime('now') WHERE id = ?", survey.task_id);
     }
-    const r = surveyResults(survey.id);
-    audit({ user: ctx.user, action: 'survey.close', entityType: 'survey', entityId: survey.id, programId: survey.program_id, after: { responses: r.responses, result_pct: r.overall }, ip: ctx.ip });
+    audit({
+      user: ctx.user, action: 'survey.close', entityType: 'survey', entityId: survey.id, programId: survey.program_id,
+      after: { responses: r.responses, target: r.target, rate: r.rate, sufficient: r.sufficient, result_pct: r.overall },
+      ip: ctx.ip,
+    });
     refreshNotifications({ programId: survey.program_id });
-    ctx.redirect(`/surveys/${survey.id}`, `أُغلقت الاستبانة — النتيجة ${r.overall === null ? '—' : `${fmtNum(r.overall)}%`}.`);
+    const note = r.sufficient
+      ? `النتيجة ${r.overall === null ? '—' : `${fmtNum(r.overall)}%`}.`
+      : `تنبيه: العينة غير كافية (${fmtNum(r.rate)}%) — لن تُحتسب ضمن اكتمال القياس.`;
+    ctx.redirect(`/surveys/${survey.id}`, `أُغلقت الاستبانة — ${note}`);
   });
 
   // ------------------------------ الصفحة العامة للطالب ------------------
-  router.get('/s/:token', (ctx) => {
-    const survey = get('SELECT * FROM surveys WHERE token = ?', ctx.params.token);
-    if (!survey || survey.status !== 'open') {
-      html(ctx.res, bare({
-        title: 'الاستبانة',
-        body: `<div class="login-card"><h1>الاستبانة غير متاحة</h1>
-          <p class="sub">الرابط غير صحيح أو أُغلقت الاستبانة.</p></div>`,
-      }), 404);
-      return;
-    }
-    const questions = all('SELECT * FROM survey_questions WHERE survey_id = ? ORDER BY sort, id', survey.id);
-    html(ctx.res, bare({
-      title: survey.title,
+  // الرابط فردي ويُستخدم مرة واحدة، والإجابة تُحفظ دون ربطها بهوية الطالب.
+
+  const notice = (res, title, text, status = 200) => html(res, bare({
+    title,
+    body: `<div class="login-card"><h1>${esc(title)}</h1><p class="sub">${esc(text)}</p></div>`,
+  }), status);
+
+  router.get('/r/:token', (ctx) => {
+    const invite = get(
+      `SELECT v.*, s.id AS survey_id, s.title, s.status
+         FROM survey_invites v JOIN surveys s ON s.id = v.survey_id WHERE v.token = ?`,
+      ctx.params.token,
+    );
+    if (!invite) return notice(ctx.res, 'الرابط غير صحيح', 'تأكد من نسخ الرابط كاملًا.', 404);
+    if (invite.status !== 'open') return notice(ctx.res, 'الاستبانة مغلقة', 'لم تعد الاستبانة تستقبل استجابات.', 410);
+    if (invite.used_at) return notice(ctx.res, 'سبق أن أجبت', 'شكرًا لك — استُلمت إجابتك على هذه الاستبانة مسبقًا.');
+
+    const questions = all('SELECT * FROM survey_questions WHERE survey_id = ? ORDER BY sort, id', invite.survey_id);
+    return html(ctx.res, bare({
+      title: invite.title,
       body: `<div class="login-card">
-        <h1>${esc(survey.title)}</h1>
+        <h1>${esc(invite.title)}</h1>
         <p class="sub">جمعية تحصيل المعرفة — استبانة تجربة الطالب</p>
-        <form method="post" action="/s/${esc(survey.token)}">
+        <form method="post" action="/r/${esc(invite.token)}">
           ${questions.map((q, i) => `<div class="check-item">
             <div class="text">${i + 1}. ${esc(q.text)}</div>
             <div class="likert">${LIKERT.map((l) => `<label>
@@ -245,38 +347,44 @@ export default function register(router) {
             ${textarea('comment', { rows: 3 })}</label>
           <button class="btn" style="width:100%">إرسال</button>
         </form>
-        <p class="demo-list">إجاباتك سرية ولا تُربط باسمك، وتُستخدم لتحسين البرنامج.</p>
+        <p class="demo-list">إجاباتك سرية ولا تُربط باسمك. الرابط خاص بك ويُستخدم مرة واحدة فقط.</p>
       </div>`,
     }));
   });
 
-  router.post('/s/:token', (ctx) => {
-    const survey = get('SELECT * FROM surveys WHERE token = ?', ctx.params.token);
-    if (!survey || survey.status !== 'open') return ctx.notFound('الاستبانة غير متاحة.');
-    const questions = all('SELECT * FROM survey_questions WHERE survey_id = ?', survey.id);
+  router.post('/r/:token', (ctx) => {
+    const invite = get(
+      `SELECT v.*, s.id AS survey_id, s.program_id, s.title, s.status
+         FROM survey_invites v JOIN surveys s ON s.id = v.survey_id WHERE v.token = ?`,
+      ctx.params.token,
+    );
+    if (!invite) return notice(ctx.res, 'الرابط غير صحيح', 'تأكد من نسخ الرابط كاملًا.', 404);
+    if (invite.status !== 'open') return notice(ctx.res, 'الاستبانة مغلقة', 'لم تعد الاستبانة تستقبل استجابات.', 410);
+    if (invite.used_at) return notice(ctx.res, 'سبق أن أجبت', 'شكرًا لك — استُلمت إجابتك على هذه الاستبانة مسبقًا.');
+
+    const questions = all('SELECT * FROM survey_questions WHERE survey_id = ?', invite.survey_id);
     const answers = [];
     for (const q of questions) {
       const v = int(ctx.body[`q_${q.id}`], 0);
       if (v >= 1 && v <= 5) answers.push({ q, v });
     }
-    if (!answers.length) return ctx.notFound('لم تُستلم أي إجابة.');
+    if (!answers.length) return notice(ctx.res, 'لم تُستلم إجابة', 'يرجى الإجابة على الأسئلة ثم الإرسال.', 400);
 
-    const res = run('INSERT INTO survey_responses (survey_id, respondent_key) VALUES (?, ?)', survey.id, token(8));
+    // لا يُحفظ أي ربط بين الاستجابة والدعوة أو الطالب — فقط أن الدعوة استُهلكت.
+    const res = run('INSERT INTO survey_responses (survey_id, respondent_key) VALUES (?, ?)', invite.survey_id, token(8));
     const responseId = Number(res.lastInsertRowid);
     for (const a of answers) {
       run('INSERT INTO survey_answers (response_id, question_id, value) VALUES (?, ?, ?)', responseId, a.q.id, a.v);
     }
+    run("UPDATE survey_invites SET used_at = datetime('now') WHERE id = ?", invite.id);
+
     const comment = String(ctx.body.comment || '').trim();
     if (comment) {
       run(`INSERT INTO complaints (program_id, ref_code, kind, source, title, body, sla_days, due_date, status)
            VALUES (?, ?, 'suggestion', 'استبانة', ?, ?, 5, date('now','+5 day'), 'open')`,
-        survey.program_id, `S-${responseId}`,
-        `ملاحظة من استبانة: ${survey.title}`.slice(0, 180), comment);
+        invite.program_id, `S-${responseId}`,
+        `ملاحظة من استبانة: ${invite.title}`.slice(0, 180), comment);
     }
-    html(ctx.res, bare({
-      title: 'شكرًا لك',
-      body: `<div class="login-card"><h1>شكرًا لك</h1>
-        <p class="sub">تم استلام إجابتك بنجاح. رأيك يسهم في تحسين برامج الجمعية.</p></div>`,
-    }));
+    return notice(ctx.res, 'شكرًا لك', 'تم استلام إجابتك بنجاح. رأيك يسهم في تحسين برامج الجمعية.');
   });
 }

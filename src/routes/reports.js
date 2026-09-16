@@ -5,6 +5,8 @@ import { send } from '../lib/http.js';
 import { roleName } from '../lib/roles.js';
 import { programsForUser, canAccessProgram } from '../lib/auth.js';
 import { computeProgram, missingMeasurements, notMetItems } from '../lib/scoring.js';
+import { programImpact } from '../lib/impact.js';
+import { impactKindLabel } from '../db/framework.js';
 
 /** مقارنة البرامج — البند 11 (UC-06): فصل النتيجة عن اكتمال القياس. */
 function comparison(ctx) {
@@ -68,6 +70,7 @@ function programReport(program) {
     `SELECT COUNT(*) total, SUM(status = 'withdrawn') withdrawn, SUM(intent_continue = 1) intent_yes,
             SUM(intent_continue IS NOT NULL) intent_asked FROM students WHERE program_id = ?`, program.id,
   );
+  const im = programImpact(program.id);
 
   const metricRows = [];
   for (const s of r.sections) {
@@ -117,6 +120,24 @@ function programReport(program) {
     surveys.map((s) => [esc(s.title), esc({ mid: 'المنتصف', end: 'النهاية', activity: 'نشاط' }[s.point] || s.point),
       statusBadge(s.status === 'open' ? 'in_progress' : s.status === 'closed' ? 'done' : 'draft'), `<span class="num">${s.responses}</span>`]),
     { empty: 'لا توجد استبانات.' }))}
+
+  ${im.has_data ? section('قياس الأثر التعليمي — مستقل عن مقياس الـ300', `
+    <p class="hint">هذا القسم يجيب عن سؤال مختلف عن مقياس الجودة: هل تعلّم الطالب فعلًا؟
+      ولا تدخل نتائجه في الدرجة ولا في اكتمال القياس.</p>
+    <div class="stats">
+      ${statCard({ label: 'متوسط القبلي', value: im.pre_pct === null ? '—' : `${fmtNum(im.pre_pct)}%`, tone: 'info' })}
+      ${statCard({ label: 'متوسط البعدي', value: im.post_pct === null ? '—' : `${fmtNum(im.post_pct)}%`, tone: 'good' })}
+      ${statCard({ label: 'مكسب التعلم المعياري', value: im.normalized_gain === null ? '—' : `${fmtNum(im.normalized_gain)}%` })}
+      ${statCard({ label: 'نسبة الإتقان', value: im.mastery_rate === null ? '—' : `${fmtNum(im.mastery_rate)}%` })}
+      ${statCard({ label: 'من تحسّن مستواه', value: im.improved_rate === null ? '—' : `${fmtNum(im.improved_rate)}%`, sub: im.paired_count ? `${im.improved_count} من ${im.paired_count}` : '' })}
+    </div>
+    ${table(['الأداة', 'النوع', 'التاريخ', 'المقيسون', 'المتوسط', 'نسبة الإتقان'],
+      im.tools.map((t) => [
+        esc(t.tool.name), esc(impactKindLabel(t.tool.kind)), fmtDate(t.tool.applied_at),
+        `<span class="num">${t.measured} / ${t.eligible}</span>`,
+        t.avg_pct === null ? '<span class="muted">—</span>' : progress(t.avg_pct),
+        t.mastery_rate === null ? '<span class="muted">—</span>' : progress(t.mastery_rate),
+      ]))}`) : ''}
 
   ${section('القياسات الناقصة', table(['المؤشر', 'المنفّذ/المطلوب', 'خطة العينة', 'المسؤول'],
     gaps.map((g) => [esc(g.indicator.name), `<span class="num">${g.completed} / ${g.required}</span>`,

@@ -418,3 +418,51 @@ CREATE INDEX IF NOT EXISTS ix_complaints_p   ON complaints(program_id, status);
 CREATE INDEX IF NOT EXISTS ix_actions_p      ON corrective_actions(program_id, status);
 CREATE INDEX IF NOT EXISTS ix_surveys_p      ON surveys(program_id, point, status);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_notif_dedupe ON notifications(user_id, dedupe_key) WHERE dedupe_key IS NOT NULL;
+
+-- =====================================================================
+-- الإصدار الثاني من المقياس: ضبط الاستبانات + قياس الأثر
+-- =====================================================================
+
+-- دعوات الاستبانة: رمز فريد لكل طالب يمنع التكرار ويحفظ سرية الإجابة.
+-- الجدول يسجّل «أن الطالب أجاب» فقط، ولا يربط إجابته بهويته إطلاقًا.
+CREATE TABLE IF NOT EXISTS survey_invites (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  survey_id  INTEGER NOT NULL REFERENCES surveys(id) ON DELETE CASCADE,
+  student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  token      TEXT    NOT NULL UNIQUE,
+  used_at    TEXT,
+  created_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (survey_id, student_id)
+);
+
+-- ------------------------------ قياس الأثر ---------------------------
+-- وحدة مستقلة تمامًا عن مقياس الـ300: تقيس ما تعلّمه الطالب فعلًا،
+-- ولا تدخل في احتساب الدرجة ولا في اكتمال القياس.
+
+CREATE TABLE IF NOT EXISTS impact_tools (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  program_id  INTEGER NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL,
+  kind        TEXT    NOT NULL,         -- pre | post | practical
+  max_score   REAL    NOT NULL DEFAULT 100,
+  mastery_pct REAL    NOT NULL DEFAULT 80,   -- حد الإتقان
+  applied_at  TEXT,
+  notes       TEXT,
+  created_by  INTEGER REFERENCES users(id),
+  created_at  TEXT    NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS impact_results (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  tool_id     INTEGER NOT NULL REFERENCES impact_tools(id) ON DELETE CASCADE,
+  student_id  INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  score       REAL    NOT NULL,
+  note        TEXT,
+  recorded_by INTEGER REFERENCES users(id),
+  recorded_at TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (tool_id, student_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_invites_survey ON survey_invites(survey_id, used_at);
+CREATE INDEX IF NOT EXISTS ix_impact_tools_p ON impact_tools(program_id, kind);
+CREATE INDEX IF NOT EXISTS ix_impact_res     ON impact_results(tool_id);

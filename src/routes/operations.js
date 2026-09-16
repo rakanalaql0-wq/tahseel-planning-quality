@@ -384,14 +384,24 @@ export default function register(router) {
       { value: 'academic', label: 'تعثر دراسي' },
     ];
     ctx.render('المتابعة والانضباط', programHead(program, 'discipline') + `
-      ${section('الحالات المتعثرة والإجراءات', table(['الطالب', 'النوع', 'الوصف', 'الإجراء', 'قناة التواصل', 'الحالة', ''],
+      ${section('الحالات المتعثرة والإجراءات', table(['الطالب', 'النوع', 'الوصف', 'الإجراء', 'جلسة المتابعة', 'قناة التواصل', 'الحالة', ''],
         rows.map((d) => [
           esc(d.student_name || '—'),
           esc(kinds.find((k) => k.value === d.kind)?.label || d.kind),
-          esc(d.description), esc(d.action || '—'), esc(d.channel || '—'), statusBadge(d.status),
+          esc(d.description), esc(d.action || '—'),
+          d.followup_at
+            ? `${badge(fmtDate(d.followup_at), 'good')}${d.followup_note ? `<br><small class="muted">${esc(d.followup_note)}</small>` : ''}`
+            : (editable ? `<form method="post" action="/programs/${program.id}/discipline/followup" class="row-form">
+                <input type="hidden" name="case_id" value="${d.id}">
+                ${input('followup_at', { type: 'date', value: today(), attrs: 'style="width:140px"' })}
+                ${input('followup_note', { placeholder: 'خلاصة الجلسة' })}
+                <button class="btn small sec">تسجيل الجلسة</button></form>`
+              : badge('لم تُعقد', 'warn')),
+          esc(d.channel || '—'), statusBadge(d.status),
           editable && d.status !== 'closed' ? `<form method="post" action="/programs/${program.id}/discipline/close" class="inline">
             <input type="hidden" name="case_id" value="${d.id}"><button class="btn small sec">إغلاق</button></form>` : '',
-        ]), { empty: 'لا توجد حالات مسجلة.' }))}
+        ]), { empty: 'لا توجد حالات مسجلة.' }),
+        { actions: badge('مؤشر «جلسات المتابعة عند الحاجة» يُحتسب من الحالات التي عُقدت لها جلسة موثّقة', 'muted') })}
       ${editable ? section('تسجيل حالة', `
         <form method="post" action="/programs/${program.id}/discipline">
           <div class="form-grid">
@@ -420,6 +430,19 @@ export default function register(router) {
     );
     audit({ user: ctx.user, action: 'discipline.create', entityType: 'discipline_case', entityId: Number(res.lastInsertRowid), programId: program.id, after: { description }, ip: ctx.ip });
     ctx.redirect(`/programs/${program.id}/discipline`, 'سُجّلت الحالة.');
+  });
+
+  router.post('/programs/:id/discipline/followup', (ctx) => {
+    const loaded = loadProgram(ctx, { perm: 'discipline.manage' }); if (!loaded) return;
+    if (!ensureOpen(ctx, loaded.program)) return;
+    const c = get('SELECT * FROM discipline_cases WHERE id = ? AND program_id = ?', ctx.body.case_id, loaded.program.id);
+    if (!c) return ctx.notFound();
+    const when = String(ctx.body.followup_at || today()).slice(0, 10);
+    const note = String(ctx.body.followup_note || '').trim() || null;
+    run("UPDATE discipline_cases SET followup_at = ?, followup_note = ?, status = CASE WHEN status = 'open' THEN 'followed' ELSE status END WHERE id = ?",
+      when, note, c.id);
+    audit({ user: ctx.user, action: 'discipline.followup', entityType: 'discipline_case', entityId: c.id, programId: c.program_id, after: { when, note }, ip: ctx.ip });
+    ctx.redirect(`/programs/${loaded.program.id}/discipline`, 'سُجّلت جلسة المتابعة.');
   });
 
   router.post('/programs/:id/discipline/close', (ctx) => {

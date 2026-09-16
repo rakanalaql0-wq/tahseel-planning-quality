@@ -14,6 +14,7 @@ export const PROGRAM_TABS = [
   ['teachers', 'المعلمون'],
   ['activities', 'الأنشطة'],
   ['surveys', 'الاستبانات'],
+  ['impact', 'قياس الأثر'],
   ['complaints', 'الشكاوى'],
   ['discipline', 'المتابعة والانضباط'],
   ['continuity', 'الاستمرارية'],

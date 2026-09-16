@@ -33,6 +33,8 @@ export const ROLES = {
       'متابعة تنفيذ المحتوى المقرر والالتزام بالتسلسل والتوقيت.',
       'متابعة الأنشطة والتطبيقات الإثرائية وقياس فاعلية الأنشطة الرئيسة.',
       'تنفيذ/إدارة تقييم المعلم في منتصف البرنامج ونهايته.',
+      'تنفيذ الزيارة الصفية مرتين على الأقل وتوثيق نتائجها.',
+      'إدارة قياس الأثر التعليمي: أدوات القياس القبلي والبعدي والعملي ونتائجها.',
       'التحقق من وضوح الأهداف والمخرجات والجدول الزمني قبل بدء البرنامج.',
       'توثيق نتيجة التحقق وإحالة أي قصور إلى مسؤول البرنامج أو الجهة المعنية.',
     ],
@@ -86,6 +88,7 @@ const PERMS = {
   academic_quality: [
     'program.read', 'teacher.verify', 'content.review', 'plan.review',
     'activity.manage', 'task.do.academic', 'survey.manage.teacher',
+    'classroom.visit', 'impact.manage',
     'evidence.upload', 'action.manage', 'report.read',
   ],
   quality_officer: [
@@ -95,7 +98,7 @@ const PERMS = {
   quality_manager: [
     'program.read', 'program.create', 'program.assign', 'program.close',
     'complaint.verify', 'metric.read', 'action.manage', 'report.read',
-    'report.approve', 'audit.read', 'survey.analyze',
+    'report.approve', 'audit.read', 'survey.analyze', 'impact.manage',
   ],
   admin: ['*'],
 };

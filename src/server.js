@@ -17,6 +17,7 @@ import registerAuth from './routes/auth.js';
 import registerDashboard from './routes/dashboard.js';
 import registerPrograms from './routes/programs.js';
 import registerSurveys from './routes/surveys.js';
+import registerImpact from './routes/impact.js';
 import registerEvidence from './routes/evidence.js';
 import registerReports from './routes/reports.js';
 import registerAdmin from './routes/admin.js';
@@ -37,12 +38,12 @@ const MIME = {
 
 const router = new Router();
 for (const register of [
-  registerAuth, registerDashboard, registerPrograms, registerSurveys,
+  registerAuth, registerDashboard, registerPrograms, registerSurveys, registerImpact,
   registerEvidence, registerReports, registerAdmin,
 ]) register(router);
 
 /** المسارات المتاحة دون تسجيل دخول. */
-const PUBLIC_PATHS = [/^\/login$/, /^\/s\/[^/]+$/, /^\/health$/];
+const PUBLIC_PATHS = [/^\/login$/, /^\/r\/[^/]+$/, /^\/health$/];
 
 async function serveStatic(pathname, res) {
   const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, '').replace(/^\//, '');
