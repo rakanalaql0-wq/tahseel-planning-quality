@@ -16,23 +16,27 @@ function comparison(ctx) {
     return { p, r };
   });
   const closed = rows.filter((x) => x.p.status === 'closed');
-  const avgScore = closed.length ? closed.reduce((s, x) => s + x.r.earned, 0) / closed.length : null;
+  const avgScore = closed.length
+    ? closed.reduce((s, x) => s + (x.r.normalized_score ?? x.r.earned), 0) / closed.length : null;
 
   return `
   <div class="pagehead"><div><h1>التقارير ولوحات المؤشرات</h1>
-    <p class="meta">مقارنة البرامج والفترات — النتيجة منفصلة عن اكتمال القياس (BR-11)</p></div></div>
+    <p class="meta">مقارنة البرامج والفترات — النتيجة منفصلة عن اكتمال القياس (BR-11).
+      المقارنة العادلة بين برامج مختلفة الاستثناءات تكون بـ«الدرجة المعيارية من 300».</p></div></div>
   <div class="stats">
     ${statCard({ label: 'البرامج', value: rows.length })}
     ${statCard({ label: 'برامج مغلقة', value: closed.length })}
     ${statCard({ label: 'متوسط الدرجة النهائية', value: avgScore === null ? '—' : `${fmtNum(avgScore)} / 300`, tone: 'info' })}
   </div>
   ${section('مقارنة البرامج', table(
-    ['البرنامج', 'الفترة', 'الحالة', 'الدرجة من 300', 'نتيجة الجودة', 'اكتمال القياس', 'القسم 1', 'القسم 2', 'القسم 3', ''],
+    ['البرنامج', 'الفترة', 'الحالة', 'الدرجة المحققة', 'المعيارية من 300', 'نتيجة الجودة', 'اكتمال القياس', 'القسم 1', 'القسم 2', 'القسم 3', ''],
     rows.map(({ p, r }) => [
       `<a href="/programs/${p.id}">${esc(p.name)}</a>`,
       `<small class="muted">${esc(p.term || '')} ${fmtDate(p.start_date)}</small>`,
       statusBadge(p.status),
-      `<span class="num">${fmtNum(r.earned)}</span>`,
+      `<span class="num">${fmtNum(r.earned)} / ${fmtNum(r.total_weight)}</span>`
+        + (r.exempt_weight ? `<br>${badge(`مستثنى ${fmtNum(r.exempt_weight)}`, 'muted')}` : ''),
+      `<span class="num">${r.normalized_score === null ? '—' : fmtNum(r.normalized_score)}</span>`,
       progress(r.quality_pct), progress(r.coverage_pct),
       ...r.sections.map((s) => `<span class="num">${fmtNum(s.earned)}/${fmtNum(s.weight)}</span>`),
       `<a class="btn sec small" href="/reports/program/${p.id}">التقرير</a>`,
@@ -42,7 +46,7 @@ function comparison(ctx) {
     Object.entries(rows.reduce((acc, { p, r }) => {
       const key = p.term || 'غير محدد';
       acc[key] = acc[key] || { n: 0, score: 0, cov: 0 };
-      acc[key].n += 1; acc[key].score += r.earned; acc[key].cov += r.coverage_pct;
+      acc[key].n += 1; acc[key].score += (r.normalized_score ?? r.earned); acc[key].cov += r.coverage_pct;
       return acc;
     }, {})).map(([term, v]) => [
       esc(term), `<span class="num">${v.n}</span>`,
@@ -99,7 +103,8 @@ function programReport(program) {
   </div></div>
 
   <div class="stats">
-    ${statCard({ label: 'الدرجة من 300', value: fmtNum(r.earned), sub: `الوزن المقيس ${fmtNum(r.measured_weight)}` })}
+    ${statCard({ label: 'الدرجة المحققة', value: `${fmtNum(r.earned)} / ${fmtNum(r.total_weight)}`, sub: r.exempt_weight ? `مستثنى ${fmtNum(r.exempt_weight)} درجة (غير منطبق)` : `الوزن المقيس ${fmtNum(r.measured_weight)}` })}
+    ${statCard({ label: 'الدرجة المعيارية من 300', value: r.normalized_score === null ? '—' : fmtNum(r.normalized_score), tone: 'info' })}
     ${statCard({ label: 'نتيجة الجودة', value: r.quality_pct === null ? '—' : `${fmtNum(r.quality_pct)}%`, tone: 'info' })}
     ${statCard({ label: 'اكتمال القياس', value: `${fmtNum(r.coverage_pct)}%`, tone: r.coverage_pct >= 100 ? 'good' : 'warn' })}
     ${statCard({ label: 'الطلاب', value: Number(students?.total || 0), sub: `${Number(students?.withdrawn || 0)} انسحاب` })}
@@ -111,7 +116,7 @@ function programReport(program) {
     <thead><tr><th>القسم / المؤشر</th><th>الدرجة</th><th>نتيجة الجودة</th><th>اكتمال القياس</th></tr></thead>
     <tbody>${metricRows.join('')}</tbody>
     <tfoot><tr class="section-row"><td><strong>الإجمالي</strong></td>
-      <td class="num"><strong>${fmtNum(r.earned)} / 300</strong></td>
+      <td class="num"><strong>${fmtNum(r.earned)} / ${fmtNum(r.total_weight)}</strong></td>
       <td>${progress(r.quality_pct)}</td><td>${progress(r.coverage_pct)}</td></tr></tfoot></table></div>`)}
 
   ${section('فريق البرنامج', table(['الدور', 'المسؤول'], team.map((t) => [roleName(t.role), esc(t.full_name)])))}
@@ -139,6 +144,15 @@ function programReport(program) {
         t.mastery_rate === null ? '<span class="muted">—</span>' : progress(t.mastery_rate),
       ]))}`) : ''}
 
+  ${r.exemptions.length ? section('المؤشرات غير المنطبقة', table(['المؤشر', 'الوزن المستثنى', 'السبب', 'الموسِم'],
+    r.exemptions.map((e) => {
+      const ind = get('SELECT name, code, weight FROM indicators WHERE id = ?', e.indicator_id);
+      return [
+        `${esc(ind?.name || '—')} <small class="muted">${esc(ind?.code || '')}</small>`,
+        `<span class="num">${fmtNum(ind?.weight)}</span>`, esc(e.reason), esc(e.by_name || '—'),
+      ];
+    })), { actions: badge(`إجمالي الوزن المستثنى ${fmtNum(r.exempt_weight)} درجة`, 'muted') }) : ''}
+
   ${section('القياسات الناقصة', table(['المؤشر', 'المنفّذ/المطلوب', 'خطة العينة', 'المسؤول'],
     gaps.map((g) => [esc(g.indicator.name), `<span class="num">${g.completed} / ${g.required}</span>`,
       `<small class="muted">${esc(g.sample_label)}</small>`, roleName(g.indicator.owner_role)]),
@@ -164,22 +178,34 @@ function programCsv(program) {
   const rows = [];
   rows.push(['البرنامج', program.name, '', '', '', '']);
   rows.push(['الفترة', program.term || '', 'من', program.start_date || '', 'إلى', program.end_date || '']);
-  rows.push(['الدرجة من 300', fmtNum(r.earned), 'نتيجة الجودة %', fmtNum(r.quality_pct), 'اكتمال القياس %', fmtNum(r.coverage_pct)]);
+  rows.push(['الدرجة المحققة', fmtNum(r.earned), 'من الوزن المنطبق', fmtNum(r.total_weight), 'وزن مستثنى', fmtNum(r.exempt_weight)]);
+  rows.push(['الدرجة المعيارية من 300', r.normalized_score === null ? '' : fmtNum(r.normalized_score), 'نتيجة الجودة %', fmtNum(r.quality_pct), 'اكتمال القياس %', fmtNum(r.coverage_pct)]);
   rows.push([]);
   rows.push(['القسم', 'المحور', 'المؤشر', 'الوزن', 'الدرجة المحققة', 'نتيجة الجودة %', 'اكتمال القياس %', 'المنفّذ', 'المطلوب', 'المسؤول', 'خطة العينة']);
   for (const s of r.sections) {
     for (const a of s.axes) {
       for (const n of a.indicators) {
         rows.push([
-          s.section.name, a.axis.name, n.indicator.name, fmtNum(n.weight), fmtNum(n.earned),
-          n.score_pct === null ? '' : fmtNum(n.score_pct), fmtNum(n.coverage_pct),
-          n.completed, n.required, roleName(n.indicator.owner_role), n.sample_label,
+          s.section.name, a.axis.name, n.indicator.name, fmtNum(n.weight),
+          n.exempt ? 'غير منطبق' : fmtNum(n.earned),
+          n.exempt ? '' : (n.score_pct === null ? '' : fmtNum(n.score_pct)),
+          n.exempt ? '' : fmtNum(n.coverage_pct),
+          n.completed, n.required, roleName(n.indicator.owner_role),
+          n.exempt ? `غير منطبق: ${n.exemption.reason}` : n.sample_label,
         ]);
       }
     }
     rows.push([`إجمالي ${s.section.name}`, '', '', fmtNum(s.weight), fmtNum(s.earned), s.score_pct === null ? '' : fmtNum(s.score_pct), fmtNum(s.coverage_pct)]);
   }
   rows.push(['الإجمالي', '', '', fmtNum(r.total_weight), fmtNum(r.earned), fmtNum(r.quality_pct), fmtNum(r.coverage_pct)]);
+  if (r.exempt_weight) {
+    rows.push([]);
+    rows.push(['المؤشرات غير المنطبقة', 'الوزن المستثنى', 'السبب']);
+    for (const e of r.exemptions) {
+      const ind = get('SELECT name, weight FROM indicators WHERE id = ?', e.indicator_id);
+      rows.push([ind?.name || '', fmtNum(ind?.weight), e.reason]);
+    }
+  }
   return toCsv([], rows);
 }
 
@@ -212,13 +238,15 @@ export default function register(router) {
       const r = computeProgram(p.id);
       return [
         p.name, p.code || '', p.term || '', p.start_date || '', p.end_date || '', p.status,
-        fmtNum(r.earned), fmtNum(r.total_weight), r.quality_pct === null ? '' : fmtNum(r.quality_pct), fmtNum(r.coverage_pct),
+        fmtNum(r.earned), fmtNum(r.total_weight),
+        r.normalized_score === null ? '' : fmtNum(r.normalized_score),
+        r.quality_pct === null ? '' : fmtNum(r.quality_pct), fmtNum(r.coverage_pct),
         ...r.sections.map((s) => fmtNum(s.earned)),
       ];
     });
     const csv = toCsv(
-      ['البرنامج', 'الرمز', 'الفترة', 'من', 'إلى', 'الحالة', 'الدرجة', 'من', 'نتيجة الجودة %', 'اكتمال القياس %',
-        'القسم 1', 'القسم 2', 'القسم 3'],
+      ['البرنامج', 'الرمز', 'الفترة', 'من', 'إلى', 'الحالة', 'الدرجة المحققة', 'الوزن المنطبق',
+        'المعيارية من 300', 'نتيجة الجودة %', 'اكتمال القياس %', 'القسم 1', 'القسم 2', 'القسم 3'],
       rows,
     );
     send(ctx.res, 200, csv, {

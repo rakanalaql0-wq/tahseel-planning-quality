@@ -285,3 +285,81 @@ test('ملخص أداة القياس يحسب الإتقان مقابل الدر
   assert.equal(s.mastered, 3);  // 100، 75، 90 ≥ 75
   assert.equal(s.mastery_rate, 75);
 });
+
+// ------------------------------ قاعدة «غير منطبق» ------------------------
+
+test('وسم مؤشر «غير منطبق» يخرج وزنه من المقياس ومن اكتمال القياس', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.5.1'"); // الضيافة — 5 درجات
+  const before = computeProgram(program.id);
+  assert.equal(before.total_weight, 300);
+  assert.equal(before.exempt_weight, 0);
+  const gapsBefore = missingMeasurements(program.id).length;
+  assert.ok(missingMeasurements(program.id).some((g) => g.indicator.code === 'I-1.5.1'));
+
+  run('INSERT INTO indicator_exemptions (program_id, indicator_id, reason) VALUES (?, ?, ?)',
+    program.id, ind.id, 'البرنامج لا يتضمن ضيافة');
+
+  const after = computeProgram(program.id);
+  assert.equal(after.declared_weight, 300, 'الوزن المعلن يبقى 300');
+  assert.equal(after.total_weight, 295, 'الوزن المنطبق ينقص بمقدار المؤشر المستثنى');
+  assert.equal(after.exempt_weight, 5);
+  assert.equal(after.exemptions.length, 1);
+  assert.equal(after.exemptions[0].reason, 'البرنامج لا يتضمن ضيافة');
+
+  // لم يعد قياسًا ناقصًا ولا يمنع الإقفال
+  assert.equal(missingMeasurements(program.id).length, gapsBefore - 1);
+  assert.ok(!missingMeasurements(program.id).some((g) => g.indicator.code === 'I-1.5.1'));
+
+  // المؤشر يبقى ظاهرًا في الشجرة موسومًا، بوزن فعلي صفر
+  const node = nodeFor('I-1.5.1');
+  assert.equal(node.exempt, true);
+  assert.equal(node.weight, 5, 'الوزن المعلن يُعرض للمستخدم');
+  assert.equal(node.effective_weight, 0);
+  assert.equal(node.earned, 0);
+  assert.equal(node.required, 0);
+  assert.equal(node.coverage_pct, null);
+
+  // قسم البيئة ينقص وزنه المنطبق من 75 إلى 70
+  const section = after.sections.find((s) => s.section.code === 'S1');
+  assert.equal(section.declared_weight, 75);
+  assert.equal(section.weight, 70);
+  assert.equal(section.exempt_weight, 5);
+});
+
+test('الدرجة المعيارية من 300 تُبقي البرامج قابلة للمقارنة رغم اختلاف الاستثناءات', () => {
+  const r = computeProgram(program.id);
+  // المحقق ÷ الوزن المنطبق × الوزن المعلن
+  assert.equal(r.normalized_score, (r.earned / r.total_weight) * 300);
+  assert.ok(r.normalized_score > r.earned, 'المعيارية أعلى لأن الوزن المنطبق أقل من 300');
+});
+
+test('إعادة تطبيق المؤشر تعيد وزنه ومهامه إلى المقياس', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.5.1'");
+  run('DELETE FROM indicator_exemptions WHERE program_id = ? AND indicator_id = ?', program.id, ind.id);
+  syncProgramTasks(program.id);
+
+  const r = computeProgram(program.id);
+  assert.equal(r.total_weight, 300);
+  assert.equal(r.exempt_weight, 0);
+  assert.equal(nodeFor('I-1.5.1').exempt, false);
+  assert.ok(missingMeasurements(program.id).some((g) => g.indicator.code === 'I-1.5.1'));
+  const tasks = all("SELECT * FROM tasks WHERE program_id = ? AND indicator_id = ? AND status = 'pending'", program.id, ind.id);
+  assert.ok(tasks.length > 0, 'تُولَّد مهام المؤشر من جديد بعد إعادة تطبيقه');
+});
+
+test('توليد المهام يتجاهل المؤشرات غير المنطبقة ويلغي مهامها المعلّقة', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.5.1'");
+  const beforeCount = all("SELECT * FROM tasks WHERE program_id = ? AND indicator_id = ? AND status = 'pending'", program.id, ind.id).length;
+  assert.ok(beforeCount > 0);
+
+  run('INSERT INTO indicator_exemptions (program_id, indicator_id, reason) VALUES (?, ?, ?)',
+    program.id, ind.id, 'برنامج عن بُعد');
+  const res = syncProgramTasks(program.id);
+  assert.ok(res.cancelled >= beforeCount);
+  assert.equal(
+    all("SELECT * FROM tasks WHERE program_id = ? AND indicator_id = ? AND status = 'pending'", program.id, ind.id).length,
+    0, 'لا مهام معلّقة لمؤشر غير منطبق',
+  );
+  run('DELETE FROM indicator_exemptions WHERE program_id = ? AND indicator_id = ?', program.id, ind.id);
+  syncProgramTasks(program.id);
+});

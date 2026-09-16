@@ -112,6 +112,8 @@ tbody tr:hover { background: #fafcfb; }
 table.compact td, table.compact th { padding: .3rem .45rem; font-size: .82rem; }
 tr.section-row td { background: var(--brand-soft); font-weight: 700; }
 tr.axis-row td { background: #f6faf9; font-weight: 600; }
+tr.exempt-row td { background: #fafafa; color: var(--ink-soft); }
+tr.exempt-row td:first-child { text-decoration: none; opacity: .85; }
 .empty { color: var(--ink-soft); font-size: .88rem; padding: .5rem 0; }
 .muted { color: var(--ink-soft); }
 /* الأرقام والنسب تُعرض باتجاه LTR داخل النص العربي حتى لا ينعكس ترتيب «13.7 / 300» */

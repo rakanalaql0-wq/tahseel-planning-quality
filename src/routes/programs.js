@@ -115,13 +115,14 @@ function overview(ctx, program) {
 }
 
 /** شجرة المقياس الكاملة. */
-function metricView(ctx, program) {
+function metricView(ctx, program, perms) {
   const r = computeProgram(program.id);
   const rows = [];
   for (const s of r.sections) {
     rows.push({ cls: 'section-row', cells: [
       `<strong>${esc(s.section.name)}</strong>`,
-      `<span class="num">${fmtNum(s.earned)} / ${fmtNum(s.weight)}</span>`,
+      `<span class="num">${fmtNum(s.earned)} / ${fmtNum(s.weight)}</span>`
+        + (s.exempt_weight ? `<br><small class="muted">مستثنى ${fmtNum(s.exempt_weight)}</small>` : ''),
       progress(s.score_pct), progress(s.coverage_pct), '',
     ] });
     for (const a of s.axes) {
@@ -132,17 +133,23 @@ function metricView(ctx, program) {
       ] });
       for (const n of a.indicators) {
         const tool = { checklist: 'قائمة تحقق', survey: 'استبانة', record: 'سجل تشغيلي' }[n.indicator.tool];
-        rows.push({ cls: '', cells: [
+        rows.push({ cls: n.exempt ? 'exempt-row' : '', cells: [
           `<span style="padding-inline-start:1.2rem">${esc(n.indicator.name)}</span>
-           <br><small class="muted">${esc(n.indicator.code)} · ${tool} · ${roleName(n.indicator.owner_role)} · ${esc(n.sample_label)}</small>`,
-          `<span class="num">${fmtNum(n.earned)} / ${fmtNum(n.weight)}</span>`,
-          progress(n.score_pct),
-          `${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small>
-           ${n.insufficient?.length ? `<br>${badge(`${n.insufficient.length} عينة غير كافية`, 'bad')}` : ''}`,
-          n.indicator.tool === 'checklist'
-            ? `<a class="btn sec small" href="/programs/${program.id}/indicator/${n.indicator.id}">السجل</a>`
-            : n.indicator.tool === 'survey'
-              ? `<a class="btn sec small" href="/programs/${program.id}/surveys">الاستبانات</a>` : '',
+           ${n.exempt ? ` ${badge('غير منطبق', 'muted')}` : ''}
+           <br><small class="muted">${esc(n.indicator.code)} · ${tool} · ${roleName(n.indicator.owner_role)} · ${esc(n.sample_label)}</small>
+           ${n.exempt ? `<br><small class="muted">السبب: ${esc(n.exemption.reason)}</small>` : ''}`,
+          n.exempt
+            ? `<small class="muted">مستثنى (${fmtNum(n.weight)})</small>`
+            : `<span class="num">${fmtNum(n.earned)} / ${fmtNum(n.weight)}</span>`,
+          n.exempt ? '<span class="muted">—</span>' : progress(n.score_pct),
+          n.exempt ? '<span class="muted">—</span>'
+            : `${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small>
+               ${n.insufficient?.length ? `<br>${badge(`${n.insufficient.length} عينة غير كافية`, 'bad')}` : ''}`,
+          n.exempt ? ''
+            : n.indicator.tool === 'checklist'
+              ? `<a class="btn sec small" href="/programs/${program.id}/indicator/${n.indicator.id}">السجل</a>`
+              : n.indicator.tool === 'survey'
+                ? `<a class="btn sec small" href="/programs/${program.id}/surveys">الاستبانات</a>` : '',
         ] });
       }
     }
@@ -156,12 +163,34 @@ function metricView(ctx, program) {
   </table></div>`;
 
   const notMet = notMetItems(program.id);
+  const canExempt = can(perms, 'indicator.exempt') && program.status !== 'closed';
+  const exemptable = all(
+    `SELECT i.id, i.code, i.name, i.weight, a.name AS axis_name, s.name AS section_name
+       FROM indicators i
+       JOIN metric_axes a ON a.id = i.axis_id
+       JOIN metric_sections s ON s.id = a.section_id
+      WHERE i.is_active = 1
+        AND i.id NOT IN (SELECT indicator_id FROM indicator_exemptions WHERE program_id = ?)
+      ORDER BY i.sort`, program.id,
+  );
+
   return `
   <div class="stats">
-    ${statCard({ label: 'الدرجة من 300', value: fmtNum(r.earned) })}
+    ${statCard({
+      label: 'الدرجة المحققة',
+      value: `${fmtNum(r.earned)} / ${fmtNum(r.total_weight)}`,
+      sub: r.exempt_weight ? `الوزن المنطبق بعد استثناء ${fmtNum(r.exempt_weight)} درجة` : 'الوزن الكامل للمقياس',
+    })}
+    ${statCard({
+      label: 'الدرجة المعيارية من 300',
+      value: r.normalized_score === null ? '—' : fmtNum(r.normalized_score),
+      tone: 'info',
+      sub: r.exempt_weight ? 'تُستخدم لمقارنة البرامج المختلفة الاستثناءات' : 'مطابقة للدرجة المحققة',
+    })}
     ${statCard({ label: 'نتيجة الجودة', value: r.quality_pct === null ? '—' : `${fmtNum(r.quality_pct)}%`, tone: 'info' })}
     ${statCard({ label: 'اكتمال القياس', value: `${fmtNum(r.coverage_pct)}%`, tone: 'warn' })}
-    ${statCard({ label: 'الوزن المقيس', value: `${fmtNum(r.measured_weight)} / 300` })}
+    ${statCard({ label: 'الوزن المقيس', value: `${fmtNum(r.measured_weight)} / ${fmtNum(r.total_weight)}` })}
+    ${r.exempt_weight ? statCard({ label: 'وزن مستثنى (غير منطبق)', value: fmtNum(r.exempt_weight), tone: 'muted', sub: `${r.exemptions.length} مؤشرًا` }) : ''}
   </div>
   ${section('شجرة المقياس', body, { actions: `<a class="btn sec small" href="/reports/program/${program.id}/export.csv">تصدير Excel</a>` })}
   ${section('العناصر غير المتحققة والجزئية', table(['المؤشر', 'العنصر', 'الحالة', 'الملاحظة'],
@@ -170,7 +199,35 @@ function metricView(ctx, program) {
       i.state === 50 ? badge('جزئي', 'warn') : badge('غير متحقق', 'bad'),
       esc(i.note || '—'),
     ]), { empty: 'لا توجد عناصر غير متحققة.' }),
-    { actions: `<a class="btn sec small" href="/programs/${program.id}/actions">الإجراءات التصحيحية</a>` })}`;
+    { actions: `<a class="btn sec small" href="/programs/${program.id}/actions">الإجراءات التصحيحية</a>` })}
+
+  ${section('المؤشرات غير المنطبقة', `
+    <p class="hint">المؤشر الموسوم «غير منطبق» يخرج وزنه من المقياس ومن اكتمال القياس،
+      فلا يظهر كقياس ناقص ولا يمنع الإقفال. السبب إلزامي ويُسجَّل في سجل التدقيق،
+      والوسم من صلاحية مدير التخطيط والجودة وحده.</p>
+    ${table(['المؤشر', 'الوزن المستثنى', 'السبب', 'الموسِم', 'التاريخ', ''],
+      r.exemptions.map((e) => {
+        const ind = get('SELECT * FROM indicators WHERE id = ?', e.indicator_id);
+        return [
+          `${esc(ind?.name || '—')}<br><small class="muted">${esc(ind?.code || '')}</small>`,
+          `<span class="num">${fmtNum(ind?.weight)}</span>`,
+          esc(e.reason), esc(e.by_name || '—'), fmtDate(e.created_at),
+          canExempt ? `<form method="post" action="/programs/${program.id}/exemptions/remove" class="inline"
+              data-confirm="سيعود المؤشر إلى المقياس وتُولَّد مهامه من جديد. متابعة؟">
+            <input type="hidden" name="indicator_id" value="${e.indicator_id}">
+            <button class="btn small sec">إعادة التطبيق</button></form>` : '',
+        ];
+      }), { empty: 'كل المؤشرات منطبقة على هذا البرنامج.' })}
+    ${canExempt ? `
+    <form method="post" action="/programs/${program.id}/exemptions" style="margin-top:.8rem">
+      <div class="form-grid">
+        ${field('المؤشر', select('indicator_id',
+          exemptable.map((i) => ({ value: i.id, label: `${i.section_name} ← ${i.name} (${fmtNum(i.weight)})` })),
+          '', { required: true, placeholder: 'اختر المؤشر غير المنطبق' }))}
+        ${field('سبب عدم الانطباق', input('reason', { required: true, placeholder: 'مثال: البرنامج عن بُعد ولا يتضمن قاعات' }))}
+      </div>
+      <button class="btn">وسم المؤشر «غير منطبق»</button>
+    </form>` : ''}`)}`;
 }
 
 export default function register(router) {
@@ -223,7 +280,7 @@ export default function register(router) {
 
   router.get('/programs/:id/metric', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
-    ctx.render('المقياس', programHead(loaded.program, 'metric') + metricView(ctx, loaded.program),
+    ctx.render('المقياس', programHead(loaded.program, 'metric') + metricView(ctx, loaded.program, loaded.perms),
       { active: '/programs', wide: true });
   });
 
@@ -257,6 +314,66 @@ export default function register(router) {
           `<a href="/tasks/${t.id}">${esc(t.title)}</a>`, fmtDate(t.due_date), roleName(t.assigned_role),
         ]), { empty: 'لا توجد مهام معلّقة لهذا المؤشر.' }))}`,
     { active: '/programs' });
+  });
+
+  // ------------------------------ «غير منطبق» ---------------------------
+  router.post('/programs/:id/exemptions', (ctx) => {
+    const loaded = loadProgram(ctx, { perm: 'indicator.exempt' }); if (!loaded) return;
+    const { program } = loaded;
+    if (!ensureOpen(ctx, program)) return;
+
+    const indicatorId = int(ctx.body.indicator_id, 0);
+    const reason = String(ctx.body.reason || '').trim();
+    const indicator = get('SELECT * FROM indicators WHERE id = ? AND is_active = 1', indicatorId);
+    if (!indicator) return ctx.redirect(`/programs/${program.id}/metric`, 'المؤشر غير موجود.', 'err');
+    if (!reason) return ctx.redirect(`/programs/${program.id}/metric`, 'سبب عدم الانطباق إلزامي.', 'err');
+
+    // لا يُستثنى مؤشر له قياسات معتمدة — الاستثناء كان سيخفيها بلا أثر ظاهر.
+    const verifications = Number(get(
+      "SELECT COUNT(*) c FROM verifications WHERE program_id = ? AND indicator_id = ? AND status = 'submitted'",
+      program.id, indicatorId,
+    )?.c || 0);
+    const responses = Number(get(
+      `SELECT COUNT(*) c FROM survey_responses r
+         JOIN surveys s ON s.id = r.survey_id
+         JOIN survey_questions q ON q.survey_id = s.id AND q.indicator_id = ?
+        WHERE s.program_id = ?`,
+      indicatorId, program.id,
+    )?.c || 0);
+    if (verifications || responses) {
+      return ctx.redirect(`/programs/${program.id}/metric`,
+        `لا يمكن وسم «${indicator.name}» غير منطبق: توجد له قياسات معتمدة (${verifications} تحققًا و${responses} استجابة).`,
+        'err');
+    }
+
+    run('INSERT OR IGNORE INTO indicator_exemptions (program_id, indicator_id, reason, created_by) VALUES (?, ?, ?, ?)',
+      program.id, indicatorId, reason, ctx.user.id);
+    const res = syncProgramTasks(program.id);
+    audit({
+      user: ctx.user, action: 'indicator.exempt', entityType: 'indicator', entityId: indicatorId,
+      programId: program.id, after: { indicator: indicator.code, weight: indicator.weight, reason },
+      ip: ctx.ip,
+    });
+    ctx.redirect(`/programs/${program.id}/metric`,
+      `وُسم «${indicator.name}» غير منطبق — خرجت ${fmtNum(indicator.weight)} درجة من المقياس، وأُلغيت ${res.cancelled} مهمة معلّقة.`);
+  });
+
+  router.post('/programs/:id/exemptions/remove', (ctx) => {
+    const loaded = loadProgram(ctx, { perm: 'indicator.exempt' }); if (!loaded) return;
+    const { program } = loaded;
+    if (!ensureOpen(ctx, program)) return;
+    const indicatorId = int(ctx.body.indicator_id, 0);
+    const row = get('SELECT * FROM indicator_exemptions WHERE program_id = ? AND indicator_id = ?', program.id, indicatorId);
+    if (!row) return ctx.notFound('لا يوجد استثناء لهذا المؤشر.');
+    run('DELETE FROM indicator_exemptions WHERE id = ?', row.id);
+    const res = syncProgramTasks(program.id);
+    refreshNotifications({ programId: program.id });
+    audit({
+      user: ctx.user, action: 'indicator.reapply', entityType: 'indicator', entityId: indicatorId,
+      programId: program.id, before: { reason: row.reason }, ip: ctx.ip,
+    });
+    ctx.redirect(`/programs/${program.id}/metric`,
+      `أُعيد المؤشر إلى المقياس — وُلّدت ${res.created} مهمة.`);
   });
 
   // ------------------------------ اللقاءات ------------------------------

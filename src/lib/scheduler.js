@@ -1,6 +1,6 @@
 import { all, get, run } from '../db/index.js';
 import { addDays, daysBetween, today } from './util.js';
-import { requiredCount, programContext, missingMeasurements, computeProgram } from './scoring.js';
+import { requiredCount, programContext, missingMeasurements, computeProgram, exemptionsFor } from './scoring.js';
 
 /**
  * محرك الجدولة — البند 5: «توليد مهام القياس تلقائيًا من الدوريات والعينات
@@ -70,11 +70,20 @@ export function syncProgramTasks(programId) {
   const ctx = programContext(programId);
   const sessions = all('SELECT * FROM sessions WHERE program_id = ? ORDER BY seq', programId);
   const indicators = all('SELECT * FROM indicators WHERE is_active = 1 ORDER BY sort, id');
+  const exemptions = exemptionsFor(programId);
 
   let created = 0;
   let cancelled = 0;
 
   for (const ind of indicators) {
+    // المؤشرات الموسومة «غير منطبق» لا تُولَّد لها مهام، وتُلغى مهامها المعلّقة.
+    if (exemptions.has(ind.id)) {
+      for (const t of all("SELECT id FROM tasks WHERE program_id = ? AND indicator_id = ? AND status = 'pending'", programId, ind.id)) {
+        run("UPDATE tasks SET status = 'cancelled' WHERE id = ?", t.id);
+        cancelled += 1;
+      }
+      continue;
+    }
     const total = requiredCount(ind, program, ctx);
     const assignee = assigneeFor(programId, ind.owner_role);
     const kind = ind.tool;

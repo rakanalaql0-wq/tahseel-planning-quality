@@ -99,6 +99,7 @@ const PERMS = {
     'program.read', 'program.create', 'program.assign', 'program.close',
     'complaint.verify', 'metric.read', 'action.manage', 'report.read',
     'report.approve', 'audit.read', 'survey.analyze', 'impact.manage',
+    'indicator.exempt',
   ],
   admin: ['*'],
 };

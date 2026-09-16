@@ -322,7 +322,7 @@ test('تصدير تقرير البرنامج إلى Excel بترميز عربي 
   assert.deepEqual([bytes[0], bytes[1], bytes[2]], [0xEF, 0xBB, 0xBF],
     'يجب أن يبدأ الملف بـ BOM ليفتح صحيحًا في Excel العربي');
   const text = await res.text();
-  assert.match(text, /الدرجة من 300/);
+  assert.match(text, /الدرجة المعيارية من 300/);
   assert.match(text, /تهيئة القاعة/);
 });
 
@@ -347,4 +347,99 @@ test('الخروج يبطل الجلسة', async () => {
   const res = await fetchAs(cookie, '/programs');
   assert.equal(res.status, 302);
   assert.match(res.headers.get('location'), /^\/login/);
+});
+
+test('«غير منطبق»: وسم مؤشر يخرجه من المقياس، وإعادة تطبيقه تعيده', async () => {
+  const manager = await login('manager');
+
+  const before = await (await fetchAs(manager, '/programs/1/close')).text();
+  assert.match(before, /الضيافة والخدمات المساندة/, 'المؤشر يظهر كقياس ناقص قبل الوسم');
+
+  const metric = await (await fetchAs(manager, '/programs/1/metric')).text();
+  const option = /<option value="(\d+)">[^<]*الضيافة والخدمات المساندة[^<]*<\/option>/.exec(metric);
+  assert.ok(option, 'المؤشر متاح للوسم في قائمة الاختيار');
+
+  const res = await fetchAs(manager, '/programs/1/exemptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ indicator_id: option[1], reason: 'لا تُقدَّم ضيافة في هذا الفوج' }),
+  });
+  assert.equal(res.status, 302);
+
+  const after = await (await fetchAs(manager, '/programs/1/metric')).text();
+  assert.match(after, /غير منطبق/);
+  assert.match(after, /لا تُقدَّم ضيافة في هذا الفوج/);
+  assert.match(after, /الدرجة المعيارية من 300/);
+  assert.match(after, /وزن مستثنى/);
+
+  // لم يعد يمنع الإقفال
+  const close = await (await fetchAs(manager, '/programs/1/close')).text();
+  assert.doesNotMatch(close, /الضيافة والخدمات المساندة —/, 'اختفى من قائمة القياسات الناقصة');
+
+  // إعادة التطبيق تعيد المؤشر إلى المقياس
+  const back = await fetchAs(manager, '/programs/1/exemptions/remove', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ indicator_id: option[1] }),
+  });
+  assert.equal(back.status, 302);
+  const restored = await (await fetchAs(manager, '/programs/1/metric')).text();
+  assert.doesNotMatch(restored, /لا تُقدَّم ضيافة في هذا الفوج/);
+  const closeAgain = await (await fetchAs(manager, '/programs/1/close')).text();
+  assert.match(closeAgain, /الضيافة والخدمات المساندة/, 'عاد ليظهر كقياس مطلوب');
+});
+
+test('«غير منطبق»: السبب إلزامي، ولا يُستثنى مؤشر له قياسات معتمدة', async () => {
+  // تنفيذ قياس فعلي على مؤشر بيئي لنجرب استثناءه بعد ذلك
+  const supervisor = await login('supervisor');
+  const tasks = await (await fetchAs(supervisor, '/tasks')).text();
+  const taskId = /href="\/tasks\/(\d+)"/.exec(tasks)[1];
+  const form = await (await fetchAs(supervisor, `/tasks/${taskId}`)).text();
+  const indicatorName = /<h1>([^<—]+)/.exec(form)[1].trim().split('—')[0].trim();
+  const itemIds = [...new Set([...form.matchAll(/name="state_(\d+)"/g)].map((m) => m[1]))];
+  const params = new URLSearchParams();
+  for (const id of itemIds) params.set(`state_${id}`, '100');
+  await fetchAs(supervisor, `/tasks/${taskId}/verify`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params,
+  });
+
+  const manager = await login('manager');
+  const metric = await (await fetchAs(manager, '/programs/1/metric')).text();
+  const escaped = indicatorName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const option = new RegExp(`<option value="(\\d+)">[^<]*${escaped}[^<]*</option>`).exec(metric);
+  assert.ok(option, `لم يُعثر على المؤشر «${indicatorName}» في قائمة الاختيار`);
+
+  // السبب إلزامي
+  const noReason = await fetchAs(manager, '/programs/1/exemptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ indicator_id: option[1], reason: '   ' }),
+  });
+  assert.match(
+    decodeURIComponent(noReason.headers.getSetCookie().find((c) => c.startsWith('tpq_flash=')) || ''),
+    /إلزامي/,
+  );
+
+  // مؤشر له قياس معتمد لا يُستثنى — حتى لا يختفي القياس بلا أثر
+  const refused = await fetchAs(manager, '/programs/1/exemptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ indicator_id: option[1], reason: 'محاولة إخفاء قياس' }),
+  });
+  assert.match(
+    decodeURIComponent(refused.headers.getSetCookie().find((c) => c.startsWith('tpq_flash=')) || ''),
+    /قياسات معتمدة/,
+  );
+});
+
+test('مسؤول البرنامج لا يملك صلاحية وسم «غير منطبق»', async () => {
+  const officer = await login('officer');
+  const res = await fetchAs(officer, '/programs/1/exemptions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ indicator_id: '1', reason: 'محاولة' }),
+  });
+  assert.equal(res.status, 403);
 });

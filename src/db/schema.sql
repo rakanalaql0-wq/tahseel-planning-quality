@@ -466,3 +466,17 @@ CREATE TABLE IF NOT EXISTS impact_results (
 CREATE INDEX IF NOT EXISTS ix_invites_survey ON survey_invites(survey_id, used_at);
 CREATE INDEX IF NOT EXISTS ix_impact_tools_p ON impact_tools(program_id, kind);
 CREATE INDEX IF NOT EXISTS ix_impact_res     ON impact_results(tool_id);
+
+-- استثناء مؤشر من مقياس برنامج معيّن («غير منطبق»).
+-- الوزن المستثنى يخرج من المقياس ومن اكتمال القياس، والسبب إلزامي وموثّق.
+CREATE TABLE IF NOT EXISTS indicator_exemptions (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  program_id   INTEGER NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  indicator_id INTEGER NOT NULL REFERENCES indicators(id) ON DELETE CASCADE,
+  reason       TEXT    NOT NULL,
+  created_by   INTEGER REFERENCES users(id),
+  created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
+  UNIQUE (program_id, indicator_id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_exempt_program ON indicator_exemptions(program_id);

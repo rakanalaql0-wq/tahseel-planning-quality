@@ -221,8 +221,43 @@ function recordResult(programId, indicator, program) {
   }
 }
 
+/** استثناءات «غير منطبق» لبرنامج معيّن: معرّف المؤشر ← السبب. */
+export function exemptionsFor(programId) {
+  return new Map(all(
+    `SELECT e.indicator_id, e.reason, e.created_at, u.full_name AS by_name
+       FROM indicator_exemptions e LEFT JOIN users u ON u.id = e.created_by
+      WHERE e.program_id = ?`,
+    programId,
+  ).map((e) => [e.indicator_id, e]));
+}
+
+export const isExempt = (programId, indicatorId) => Boolean(get(
+  'SELECT 1 FROM indicator_exemptions WHERE program_id = ? AND indicator_id = ?',
+  programId, indicatorId,
+));
+
 /** يحسب نتيجة مؤشر واحد داخل برنامج. */
-export function computeIndicator(program, indicator, ctx) {
+export function computeIndicator(program, indicator, ctx, exemption = null) {
+  // مؤشر «غير منطبق»: وزنه يخرج من المقياس ومن اكتمال القياس تمامًا.
+  if (exemption) {
+    return {
+      indicator,
+      exempt: true,
+      exemption,
+      required: 0,
+      completed: 0,
+      coverage_pct: null,
+      score_pct: null,
+      has_data: false,
+      earned: 0,
+      weight: Number(indicator.weight),      // الوزن المعلن (للعرض فقط)
+      effective_weight: 0,                   // لا يدخل في أي حساب
+      sample_label: samplePlanLabel(indicator),
+      responses: null,
+      insufficient: [],
+    };
+  }
+
   const required = requiredCount(indicator, program, ctx);
   let res;
   if (indicator.tool === 'checklist') res = checklistResult(program.id, indicator.id);
@@ -239,8 +274,11 @@ export function computeIndicator(program, indicator, ctx) {
     coverage_pct: Math.min(100, coverage),
     score_pct: res.pct,
     has_data: hasData,
+    exempt: false,
+    exemption: null,
     earned: hasData ? (Number(indicator.weight) * res.pct) / 100 : 0,
     weight: Number(indicator.weight),
+    effective_weight: Number(indicator.weight),
     sample_label: samplePlanLabel(indicator),
     responses: res.responses ?? null,
     insufficient: res.insufficient ?? [],
@@ -266,9 +304,12 @@ export function computeProgram(programId) {
   const sections = all('SELECT * FROM metric_sections ORDER BY sort, id');
   const axes = all('SELECT * FROM metric_axes ORDER BY sort, id');
   const indicators = all('SELECT * FROM indicators WHERE is_active = 1 ORDER BY sort, id');
+  const exemptions = exemptionsFor(programId);
 
   let totalEarned = 0;
-  let totalWeight = 0;
+  let totalWeight = 0;      // الوزن المنطبق (بعد استبعاد «غير منطبق»)
+  let declaredWeight = 0;   // الوزن المعلن الكامل (300)
+  let exemptWeight = 0;
   let measuredWeight = 0;
   let coverageWeighted = 0;
 
@@ -276,15 +317,20 @@ export function computeProgram(programId) {
     const axisNodes = axes.filter((a) => a.section_id === section.id).map((axis) => {
       const indNodes = indicators
         .filter((i) => i.axis_id === axis.id)
-        .map((i) => computeIndicator(program, i, ctx));
-      const aWeight = indNodes.reduce((s, n) => s + n.weight, 0);
+        .map((i) => computeIndicator(program, i, ctx, exemptions.get(i.id) || null));
+      const aWeight = indNodes.reduce((s, n) => s + n.effective_weight, 0);
+      const aDeclared = indNodes.reduce((s, n) => s + n.weight, 0);
       const aEarned = indNodes.reduce((s, n) => s + n.earned, 0);
-      const aMeasured = indNodes.filter((n) => n.has_data).reduce((s, n) => s + n.weight, 0);
-      const aCoverage = aWeight ? indNodes.reduce((s, n) => s + (n.coverage_pct * n.weight), 0) / aWeight : 0;
+      const aMeasured = indNodes.filter((n) => n.has_data).reduce((s, n) => s + n.effective_weight, 0);
+      const aCoverage = aWeight
+        ? indNodes.reduce((s, n) => s + ((n.coverage_pct ?? 0) * n.effective_weight), 0) / aWeight
+        : null;
       return {
         axis,
         indicators: indNodes,
         weight: aWeight,
+        declared_weight: aDeclared,
+        exempt_weight: aDeclared - aWeight,
         earned: aEarned,
         measured_weight: aMeasured,
         coverage_pct: aCoverage,
@@ -292,20 +338,26 @@ export function computeProgram(programId) {
       };
     });
     const sWeight = axisNodes.reduce((s, n) => s + n.weight, 0);
+    const sDeclared = axisNodes.reduce((s, n) => s + n.declared_weight, 0);
     const sEarned = axisNodes.reduce((s, n) => s + n.earned, 0);
     const sMeasured = axisNodes.reduce((s, n) => s + n.measured_weight, 0);
-    const sCoverage = sWeight ? axisNodes.reduce((s, n) => s + (n.coverage_pct * n.weight), 0) / sWeight : 0;
+    const sCoverage = sWeight
+      ? axisNodes.reduce((s, n) => s + ((n.coverage_pct ?? 0) * n.weight), 0) / sWeight
+      : null;
 
     totalEarned += sEarned;
     totalWeight += sWeight;
+    declaredWeight += sDeclared;
+    exemptWeight += sDeclared - sWeight;
     measuredWeight += sMeasured;
-    coverageWeighted += sCoverage * sWeight;
+    coverageWeighted += (sCoverage ?? 0) * sWeight;
 
     return {
       section,
       axes: axisNodes,
       weight: sWeight,
-      declared_weight: Number(section.weight),
+      declared_weight: sDeclared,
+      exempt_weight: sDeclared - sWeight,
       earned: sEarned,
       measured_weight: sMeasured,
       coverage_pct: sCoverage,
@@ -317,12 +369,17 @@ export function computeProgram(programId) {
     program,
     ctx,
     sections: sectionNodes,
-    total_weight: totalWeight,               // 300 — BR-01
-    earned: totalEarned,                     // الدرجة المحققة من 300
+    exemptions: [...exemptions.values()],
+    total_weight: totalWeight,               // الوزن المنطبق على هذا البرنامج
+    declared_weight: declaredWeight,         // 300 — BR-01
+    exempt_weight: exemptWeight,             // ما استُثني بقاعدة «غير منطبق»
+    earned: totalEarned,                     // الدرجة المحققة من الوزن المنطبق
     measured_weight: measuredWeight,
     // نتيجة الجودة على ما تم قياسه فعلًا — منفصلة عن الاكتمال (BR-11)
     quality_pct: measuredWeight ? (totalEarned / measuredWeight) * 100 : null,
     coverage_pct: totalWeight ? coverageWeighted / totalWeight : 0,
+    // الدرجة المعيارية من 300 لمقارنة البرامج مهما اختلفت استثناءاتها
+    normalized_score: totalWeight ? (totalEarned / totalWeight) * declaredWeight : null,
   };
 }
 
@@ -334,6 +391,7 @@ export function missingMeasurements(programId) {
   for (const s of result.sections) {
     for (const a of s.axes) {
       for (const n of a.indicators) {
+        if (n.exempt) continue; // «غير منطبق» لا يُعد قياسًا ناقصًا
         if (n.completed < n.required) {
           gaps.push({
             section: s.section.name,
