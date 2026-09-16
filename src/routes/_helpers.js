@@ -11,34 +11,42 @@ import { icon } from '../views/icons.js';
  * `perm: null` يعني متاح لكل من أُسند إليه البرنامج.
  * `anyPerm` يعني يكفي امتلاك واحدة من الصلاحيات.
  */
+export const TAB_GROUPS = [
+  { id: 'main', label: '' },
+  { id: 'ops', label: 'التشغيل' },
+  { id: 'measure', label: 'القياس' },
+  { id: 'follow', label: 'المتابعة' },
+  { id: 'admin', label: 'الإدارة' },
+];
+
 export const PROGRAM_TABS = [
-  { key: '', label: 'نظرة عامة', ico: 'home', perm: null },
-  { key: 'metric', label: 'المقياس والدرجة', ico: 'metric', perm: null },
-  { key: 'sessions', label: 'اللقاءات', ico: 'sessions', perm: 'session.manage' },
-  { key: 'students', label: 'الطلاب', ico: 'students', perm: 'student.manage' },
-  { key: 'attendance', label: 'الحضور', ico: 'attendance', perm: 'attendance.manage' },
-  { key: 'plan', label: 'الخطة والمحتوى', ico: 'plan', perm: 'plan.review' },
-  { key: 'teachers', label: 'المعلمون', ico: 'teacher', perm: 'teacher.verify' },
-  { key: 'activities', label: 'الأنشطة', ico: 'activity', perm: 'activity.manage' },
+  { key: '', label: 'نظرة عامة', ico: 'home', perm: null, group: 'main' },
+  { key: 'metric', label: 'المقياس والدرجة', ico: 'metric', perm: null, group: 'main' },
+  { key: 'sessions', group: 'ops', label: 'اللقاءات', ico: 'sessions', perm: 'session.manage' },
+  { key: 'students', group: 'ops', label: 'الطلاب', ico: 'students', perm: 'student.manage' },
+  { key: 'attendance', group: 'ops', label: 'الحضور', ico: 'attendance', perm: 'attendance.manage' },
+  { key: 'plan', group: 'ops', label: 'الخطة والمحتوى', ico: 'plan', perm: 'plan.review' },
+  { key: 'teachers', group: 'ops', label: 'المعلمون', ico: 'teacher', perm: 'teacher.verify' },
+  { key: 'activities', group: 'ops', label: 'الأنشطة', ico: 'activity', perm: 'activity.manage' },
   {
-    key: 'surveys',
+    key: 'surveys', group: 'measure',
     label: 'الاستبانات',
     ico: 'survey',
     anyPerm: ['survey.manage.teacher', 'survey.manage.experience', 'survey.analyze'],
   },
-  { key: 'impact', label: 'قياس الأثر', ico: 'impact', perm: 'impact.manage' },
+  { key: 'impact', group: 'measure', label: 'قياس الأثر', ico: 'impact', perm: 'impact.manage' },
   {
-    key: 'complaints',
+    key: 'complaints', group: 'follow',
     label: 'الشكاوى',
     ico: 'complaint',
     anyPerm: ['complaint.manage', 'complaint.verify'],
   },
-  { key: 'discipline', label: 'المتابعة والانضباط', ico: 'discipline', perm: 'discipline.manage' },
-  { key: 'continuity', label: 'الاستمرارية', ico: 'continuity', perm: 'continuity.manage' },
-  { key: 'actions', label: 'الإجراءات', ico: 'actions', perm: 'action.manage' },
-  { key: 'team', label: 'الفريق والأدوار', ico: 'team', perm: null },
-  { key: 'audit', label: 'سجل التدقيق', ico: 'audit', perm: 'audit.read' },
-  { key: 'close', label: 'إقفال البرنامج', ico: 'closeProgram', perm: 'program.close' },
+  { key: 'discipline', group: 'follow', label: 'المتابعة والانضباط', ico: 'discipline', perm: 'discipline.manage' },
+  { key: 'continuity', group: 'follow', label: 'الاستمرارية', ico: 'continuity', perm: 'continuity.manage' },
+  { key: 'actions', group: 'follow', label: 'الإجراءات', ico: 'actions', perm: 'action.manage' },
+  { key: 'team', group: 'admin', label: 'الفريق والأدوار', ico: 'team', perm: null },
+  { key: 'audit', group: 'admin', label: 'سجل التدقيق', ico: 'audit', perm: 'audit.read' },
+  { key: 'close', group: 'admin', label: 'إقفال البرنامج', ico: 'closeProgram', perm: 'program.close' },
 ];
 
 /** التبويبات التي يملك المستخدم صلاحية رؤيتها. */
@@ -88,9 +96,15 @@ export function programHead(program, active, perms = null, extra = '') {
     </div>
     <div>${extra}</div>
   </div>
-  <nav class="subnav">${tabs.map((t) =>
-    `<a class="${active === t.key ? 'on' : ''}" href="/programs/${program.id}${t.key ? `/${t.key}` : ''}">
-      ${icon(t.ico, { size: 15 })}<span>${esc(t.label)}</span></a>`).join('')}</nav>`;
+  <nav class="subnav">${TAB_GROUPS.map((g) => {
+    const items = tabs.filter((t) => t.group === g.id);
+    if (!items.length) return '';
+    return `<span class="subnav-group">
+      ${g.label ? `<span class="g-label">${esc(g.label)}</span>` : ''}
+      ${items.map((t) => `<a class="${active === t.key ? 'on' : ''}" href="/programs/${program.id}${t.key ? `/${t.key}` : ''}">
+        ${icon(t.ico, { size: 15 })}<span>${esc(t.label)}</span></a>`).join('')}
+    </span>`;
+  }).join('')}</nav>`;
 }
 
 export const yesNo = (v) => (v ? 'نعم' : 'لا');

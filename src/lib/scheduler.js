@@ -51,9 +51,9 @@ function assigneeFor(programId, role) {
   return row?.user_id ?? null;
 }
 
-function taskExists(programId, indicatorId, seq, sessionId) {
+function findTask(programId, indicatorId, seq, sessionId) {
   return get(
-    `SELECT id FROM tasks
+    `SELECT id, status FROM tasks
       WHERE program_id = ? AND indicator_id = ? AND seq = ?
         AND ((session_id IS NULL AND ? IS NULL) OR session_id = ?)`,
     programId, indicatorId, seq, sessionId, sessionId,
@@ -99,7 +99,16 @@ export function syncProgramTasks(programId) {
     for (let seq = 1; seq <= total; seq += 1) {
       const session = sampleSessions[seq - 1] || null;
       const sessionId = session ? session.id : null;
-      if (taskExists(programId, ind.id, seq, sessionId)) continue;
+      const existing = findTask(programId, ind.id, seq, sessionId);
+      if (existing) {
+        // مهمة أُلغيت سابقًا (باستثناء المؤشر مثلًا) وعاد المؤشر مطلوبًا:
+        // تُعاد إلى «معلّقة» بدل تركها ملغاة فيبقى المؤشر بلا وسيلة قياس.
+        if (existing.status === 'cancelled') {
+          run("UPDATE tasks SET status = 'pending', completed_at = NULL WHERE id = ?", existing.id);
+          created += 1;
+        }
+        continue;
+      }
       const due = session?.session_date || dueDateFor(program, ind, seq, total);
       const title = session
         ? `${ind.name} — اللقاء ${session.seq}`

@@ -363,3 +363,147 @@ test('توليد المهام يتجاهل المؤشرات غير المنطب�
   run('DELETE FROM indicator_exemptions WHERE program_id = ? AND indicator_id = ?', program.id, ind.id);
   syncProgramTasks(program.id);
 });
+
+// ------------------------------ التشخيص والذكاء ---------------------------
+
+const { programDiagnostics, prioritizedTasks, portfolioHealth } = await import('../src/lib/insights.js');
+const { recordVerificationFailures, prioritizedActions, groupKeyFor } = await import('../src/lib/actions.js');
+const { programBenchmark, termTrend, indicatorBenchmarks } = await import('../src/lib/benchmark.js');
+
+test('التشخيص يكتشف استحالة اكتمال العينة قبل فوات الأوان', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.3.1'"); // عينة 50% من اللقاءات
+  // اجعل كل لقاءات العينة في الماضي: تصبح الفرص المتبقية صفرًا
+  run("UPDATE sessions SET session_date = date('now','-5 day') WHERE program_id = ?", program.id);
+
+  const d = programDiagnostics(program.id);
+  const f = d.findings.find((x) => x.kind === 'sample_impossible' && x.detail.includes('فرصة'));
+  assert.ok(f, 'يجب أن يُنذر باستحالة اكتمال العينة');
+  assert.equal(f.severity, 'critical');
+  assert.ok(f.impact >= 10, 'الأثر يساوي وزن المؤشر المهدد');
+  assert.ok(f.href.includes('/sessions'), 'يقترح إجراءً قابلًا للنقر');
+
+  // بإعادة اللقاءات إلى المستقبل يزول الإنذار
+  run("UPDATE sessions SET session_date = date('now','+5 day') WHERE program_id = ?", program.id);
+  const after = programDiagnostics(program.id);
+  assert.ok(!after.findings.some((x) => x.kind === 'sample_impossible'));
+  assert.ok(ind);
+});
+
+test('التشخيص يرتب أكبر أسباب فقد الدرجة ويسمّي العنصر المخفق', () => {
+  const d = programDiagnostics(program.id);
+  const loss = d.findings.filter((f) => f.kind === 'score_loss');
+  assert.ok(loss.length > 0, 'يوجد فقد درجات من التحقق السابق');
+  // مرتبة تنازليًا بالأثر
+  for (let i = 1; i < loss.length; i += 1) assert.ok(loss[i - 1].impact >= loss[i].impact);
+  assert.match(loss[0].detail, /النتيجة/);
+});
+
+test('التشخيص يرصد الشكاوى المتجاوزة للمدة المعتمدة', () => {
+  run("UPDATE complaints SET due_date = date('now','-3 day') WHERE program_id = ?", program.id);
+  const d = programDiagnostics(program.id);
+  const f = d.findings.find((x) => x.kind === 'complaint_sla');
+  assert.ok(f);
+  assert.equal(f.severity, 'critical');
+  assert.equal(f.impact, 15);
+});
+
+test('ترتيب المهام بالأولوية يقدّم الأثر على التاريخ', () => {
+  const officer = get("SELECT * FROM users WHERE username = 'officer'");
+  const tasks = prioritizedTasks(officer.id);
+  assert.ok(tasks.length > 1);
+  for (let i = 1; i < tasks.length; i += 1) {
+    assert.ok(tasks[i - 1].priority >= tasks[i].priority, 'المهام مرتبة تنازليًا بالأولوية');
+  }
+  assert.ok(tasks[0].reasons.length > 0, 'لكل مهمة سبب مكتوب لأولويتها');
+  // مهمة متأخرة يجب أن تسبق مهمة مستقبلية بنفس الوزن
+  const overdue = tasks.filter((t) => t.reasons.some((r) => r.includes('متأخرة')));
+  if (overdue.length) assert.ok(overdue[0].priority >= 40);
+});
+
+test('الإجراءات الذكية: المشكلة المتكررة إجراء واحد بعدّاد لا إجراءات متفرقة', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.2.1'");
+  const item = get('SELECT * FROM checklist_items WHERE indicator_id = ? LIMIT 1', ind.id);
+  const before = all('SELECT * FROM corrective_actions WHERE program_id = ?', program.id).length;
+
+  const fail = { item, state: 0, note: 'المكيف لا يعمل' };
+  const r1 = recordVerificationFailures({
+    programId: program.id, indicatorId: ind.id, indicatorName: ind.name,
+    failures: [fail], ownerId: null, userId: null, verificationId: null,
+  });
+  assert.equal(r1.created, 1);
+
+  // نفس المشكلة مرة أخرى: تُدمج ولا تُنشئ إجراءً جديدًا
+  const r2 = recordVerificationFailures({
+    programId: program.id, indicatorId: ind.id, indicatorName: ind.name,
+    failures: [fail], ownerId: null, userId: null, verificationId: null,
+  });
+  assert.equal(r2.created, 0);
+  assert.equal(r2.merged, 1);
+
+  const after = all('SELECT * FROM corrective_actions WHERE program_id = ? AND group_key = ?',
+    program.id, groupKeyFor(ind.id, item.id));
+  assert.equal(after.length, 1, 'إجراء واحد لا إجراءان');
+  assert.equal(after[0].occurrence_count, 2, 'العدّاد يسجل التكرار');
+  assert.equal(all('SELECT * FROM corrective_actions WHERE program_id = ?', program.id).length, before + 1);
+});
+
+test('الإجراءات الذكية: عودة المشكلة بعد الإغلاق تُوسم «تكرار» بأولوية أعلى', () => {
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.2.1'");
+  const item = get('SELECT * FROM checklist_items WHERE indicator_id = ? LIMIT 1', ind.id);
+  const key = groupKeyFor(ind.id, item.id);
+
+  run("UPDATE corrective_actions SET status = 'done', closed_at = date('now') WHERE group_key = ?", key);
+
+  const r = recordVerificationFailures({
+    programId: program.id, indicatorId: ind.id, indicatorName: ind.name,
+    failures: [{ item, state: 0, note: 'عاد العطل' }], ownerId: null, userId: null, verificationId: null,
+  });
+  assert.equal(r.recurred, 1);
+
+  const recurred = get("SELECT * FROM corrective_actions WHERE group_key = ? AND recurred = 1", key);
+  assert.ok(recurred, 'أُنشئ إجراء موسوم بالتكرار');
+  assert.match(recurred.title, /تكرار بعد المعالجة/);
+  assert.match(recurred.description, /السبب الجذري لم يُعالَج/);
+
+  // الأولوية: التكرار يتصدر لوحة الإجراءات
+  const ordered = prioritizedActions(program.id);
+  assert.equal(ordered[0].recurred, 1, 'الإجراء المتكرر في المقدمة');
+
+  // ويظهر في التشخيص
+  const d = programDiagnostics(program.id);
+  assert.ok(d.findings.some((f) => f.kind === 'recurrence'), 'التشخيص ينبّه للتكرار');
+});
+
+test('المعايرة: مقارنة البرنامج بمتوسط الجمعية وتحديد الشاذ', () => {
+  // برنامج ثانٍ بقياس مختلف ليصلح أساسًا للمقارنة
+  run(`INSERT INTO programs (name, code, term, start_date, end_date, planned_sessions, planned_students, status)
+       VALUES ('برنامج المقارنة', 'PRG-BM', 'الفصل الأول 2026', date('now','-30 day'), date('now','+10 day'), 8, 20, 'active')`);
+  const other = get("SELECT * FROM programs WHERE code = 'PRG-BM'");
+  const ind = get("SELECT * FROM indicators WHERE code = 'I-1.4.1'");
+  run(`INSERT INTO verifications (program_id, indicator_id, score_pct, status, completed_at)
+       VALUES (?, ?, 100, 'submitted', datetime('now'))`, other.id, ind.id);
+
+  const b = programBenchmark(program.id);
+  assert.ok(b, 'المقارنة متاحة');
+  assert.ok(b.peers >= 1, 'يوجد برنامج واحد على الأقل للمقارنة');
+  const gap = b.weakest.find((g) => g.indicator.code === 'I-1.4.1');
+  assert.ok(gap, 'المؤشر الأضعف من المعتاد مرصود');
+  assert.ok(gap.delta < 0, 'الفرق سالب لأن الآخر حقق 100%');
+
+  const benchMap = indicatorBenchmarks(program.id);
+  assert.equal(benchMap.get(ind.id).avg, 100);
+
+  const trend = termTrend();
+  assert.ok(trend.length >= 1);
+  assert.ok(trend[0].programs >= 1);
+});
+
+test('صحة المحفظة ترتب البرامج المهددة أولًا', () => {
+  const programs = all("SELECT * FROM programs WHERE status <> 'closed'");
+  const portfolio = portfolioHealth(programs);
+  assert.ok(portfolio.length >= 1);
+  const rank = { critical: 0, warning: 1, good: 2 };
+  for (let i = 1; i < portfolio.length; i += 1) {
+    assert.ok(rank[portfolio[i - 1].health] <= rank[portfolio[i].health], 'الأسوأ حالًا أولًا');
+  }
+});

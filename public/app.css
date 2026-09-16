@@ -521,3 +521,72 @@ input[type=file] { padding: .3rem; font-size: .82rem; }
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
+
+/* ------------------------- التشخيص والمقارنة ------------------------- */
+
+.insight {
+  display: flex; gap: .75rem; align-items: flex-start;
+  background: #fff; border: 1px solid var(--line); border-inline-start: 4px solid var(--green);
+  border-radius: var(--r); padding: .8rem .9rem; margin-bottom: .6rem;
+}
+.insight.crit { border-inline-start-color: var(--bad); background: #fffafa; }
+.insight.warn { border-inline-start-color: var(--gold); background: #fffdf8; }
+.insight.info { border-inline-start-color: var(--deep); }
+.insight.good { border-inline-start-color: var(--good); background: #fafffc; }
+.ins-ico { flex: none; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; background: var(--line-soft); color: var(--ink-soft); }
+.insight.crit .ins-ico { background: #fbe7e4; color: var(--bad); }
+.insight.warn .ins-ico { background: var(--gold-soft); color: #8a6100; }
+.insight.good .ins-ico { background: #e4f5ec; color: var(--good); }
+.insight.info .ins-ico { background: var(--green-soft); color: var(--deep); }
+.ins-body { flex: 1; min-width: 0; }
+.ins-body h3 { font-size: .93rem; margin: 0 0 .15rem; }
+.ins-body p { font-size: .84rem; color: var(--ink-soft); margin: 0; }
+.ins-act { flex: none; align-self: center; }
+
+.cmp { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.cmp-bar { position: relative; flex: 1 1 120px; min-width: 100px; height: 16px; background: var(--line-soft); border-radius: 8px; overflow: hidden; }
+.cmp-fill { position: absolute; inset-block: 0; inset-inline-start: 0; border-radius: 8px; background: var(--green); }
+.cmp-fill.good { background: linear-gradient(90deg, #35b57b, var(--good)); }
+.cmp-fill.warn { background: linear-gradient(90deg, var(--sand), var(--gold)); }
+.cmp-fill.bad { background: linear-gradient(90deg, #e07f70, var(--bad)); }
+.cmp-peer { position: absolute; inset-block: -2px; width: 2px; background: var(--deep-2); opacity: .75; }
+.cmp-num { font-size: .8rem; font-weight: 600; white-space: nowrap; }
+.cmp-num small.good { color: var(--good); }
+.cmp-num small.bad { color: var(--bad); }
+.cmp-num small.warn { color: var(--ink-soft); }
+
+ul.prio-list { list-style: none; padding: 0; margin: 0; counter-reset: prio; }
+.prio {
+  display: flex; gap: .7rem; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  padding: .55rem .7rem; border: 1px solid var(--line); border-radius: var(--r);
+  margin-bottom: .45rem; background: #fff;
+}
+.prio::before {
+  counter-increment: prio; content: counter(prio);
+  width: 25px; height: 25px; border-radius: 50%; flex: none;
+  display: grid; place-items: center; font-size: .78rem; font-weight: 700;
+  background: var(--green-soft); color: var(--deep);
+}
+.prio.bad::before { background: #fbe7e4; color: var(--bad); }
+.prio.warn::before { background: var(--gold-soft); color: #8a6100; }
+.prio-main { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; }
+.prio-main small { font-size: .76rem; }
+.prio-why { display: flex; gap: .3rem; flex-wrap: wrap; }
+
+/* مجموعات تبويبات البرنامج */
+.subnav-group { display: flex; align-items: center; gap: .3rem; }
+.subnav-group + .subnav-group { border-inline-start: 1px solid var(--line); padding-inline-start: .45rem; margin-inline-start: .15rem; }
+.subnav-group > .g-label {
+  font-size: .68rem; color: var(--ink-faint); font-weight: 600;
+  padding-inline-end: .1rem; white-space: nowrap;
+}
+@media (max-width: 780px) {
+  .subnav-group > .g-label { display: none; }
+  .subnav-group + .subnav-group { border-inline-start: 0; padding-inline-start: 0; margin-inline-start: 0; }
+  .insight { flex-wrap: wrap; }
+  .ins-act { width: 100%; }
+}
+
+.next-up { border: 2px solid var(--green); box-shadow: 0 4px 18px rgba(54,172,141,.16); }
+.next-up .panel-head { background: linear-gradient(90deg, var(--green-soft), #fff); }
+.kanban .card.recurred { border-inline-start: 3px solid var(--bad); background: #fffafa; }

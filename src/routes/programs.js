@@ -1,8 +1,12 @@
 import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, fmtNum, int, today, addDays } from '../lib/util.js';
 import {
-  statCard, table, section, statusBadge, badge, progress, select, field, input, textarea, evidenceList, evidenceForm,
+  statCard, table, section, statusBadge, badge, progress, select, field, input, textarea,
+  evidenceList, evidenceForm, insightList, compareBar,
 } from '../views/ui.js';
+import { icon } from '../views/icons.js';
+import { programDiagnostics, healthLabel } from '../lib/insights.js';
+import { programBenchmark } from '../lib/benchmark.js';
 import { ROLES, ROLE_KEYS, roleName, can } from '../lib/roles.js';
 import { programsForUser } from '../lib/auth.js';
 import { computeProgram, missingMeasurements, notMetItems } from '../lib/scoring.js';
@@ -55,63 +59,123 @@ function programsList(ctx) {
     ${createForm}`;
 }
 
-/** نظرة عامة على البرنامج. */
-function overview(ctx, program) {
-  const r = computeProgram(program.id);
-  const gaps = missingMeasurements(program.id);
+/**
+ * نظرة عامة على البرنامج.
+ * ثلاثة أرقام رئيسة، ثم تشخيص «لماذا ومَا العمل»، ثم التفاصيل —
+ * بدل ثماني بطاقات متساوية الأهمية لا تقول أيها المهم.
+ */
+function overview(ctx, program, perms) {
+  const diag = programDiagnostics(program.id);
+  const r = diag.result;
+  const bench = programBenchmark(program.id);
+
   const tasks = get(
     `SELECT SUM(status = 'pending') pending, SUM(status = 'done') done,
             SUM(status = 'pending' AND due_date < date('now')) overdue
        FROM tasks WHERE program_id = ?`, program.id,
   );
   const students = get(
-    `SELECT COUNT(*) total, SUM(status = 'withdrawn') withdrawn FROM students WHERE program_id = ?`, program.id,
+    "SELECT COUNT(*) total, SUM(status = 'withdrawn') withdrawn FROM students WHERE program_id = ?", program.id,
   );
   const complaints = get(
-    `SELECT COUNT(*) total, SUM(status <> 'closed') open FROM complaints WHERE program_id = ?`, program.id,
+    "SELECT COUNT(*) total, SUM(status <> 'closed') open FROM complaints WHERE program_id = ?", program.id,
   );
   const actions = get(
-    `SELECT COUNT(*) total, SUM(status IN ('open','in_progress')) open FROM corrective_actions WHERE program_id = ?`, program.id,
+    `SELECT COUNT(*) total, SUM(status IN ('open','in_progress')) open,
+            SUM(recurred = 1) recurred FROM corrective_actions WHERE program_id = ?`, program.id,
   );
   const team = all(
     `SELECT a.role, u.full_name FROM program_assignments a JOIN users u ON u.id = a.user_id
       WHERE a.program_id = ? ORDER BY a.role`, program.id,
   );
 
-  const sectionRows = (r?.sections || []).map((s) => [
-    esc(s.section.name),
-    `<span class="num">${fmtNum(s.earned)} / ${fmtNum(s.weight)}</span>`,
-    progress(s.score_pct),
-    progress(s.coverage_pct),
-  ]);
-
   return `
   <div class="stats">
-    ${statCard({ label: 'الدرجة الحالية من 300', value: fmtNum(r?.earned), sub: `مقيس منها ${fmtNum(r?.measured_weight)} درجة` })}
-    ${statCard({ label: 'نتيجة الجودة على المقيس', value: r?.quality_pct === null ? '—' : `${fmtNum(r.quality_pct)}%`, tone: (r?.quality_pct ?? 0) >= 85 ? 'good' : (r?.quality_pct ?? 0) >= 60 ? 'warn' : 'bad' })}
-    ${statCard({ label: 'اكتمال القياس', value: `${fmtNum(r?.coverage_pct)}%`, tone: (r?.coverage_pct ?? 0) >= 90 ? 'good' : 'warn', sub: 'مستقل عن نتيجة الجودة (BR-11)' })}
-    ${statCard({ label: 'مهام معلّقة', value: Number(tasks?.pending || 0), sub: `${Number(tasks?.overdue || 0)} متأخرة`, tone: Number(tasks?.overdue || 0) ? 'bad' : '' })}
-    ${statCard({ label: 'الطلاب', value: Number(students?.total || 0), sub: `${Number(students?.withdrawn || 0)} منسحبون` })}
-    ${statCard({ label: 'شكاوى مفتوحة', value: Number(complaints?.open || 0), tone: Number(complaints?.open || 0) ? 'warn' : 'good' })}
-    ${statCard({ label: 'إجراءات مفتوحة', value: Number(actions?.open || 0), tone: Number(actions?.open || 0) ? 'warn' : 'good' })}
-    ${statCard({ label: 'القياسات الناقصة', value: gaps.length, tone: gaps.length ? 'warn' : 'good' })}
+    ${statCard({
+      label: 'الدرجة المحققة',
+      value: `${fmtNum(r.earned)} / ${fmtNum(r.total_weight)}`,
+      ico: 'metric',
+      sub: r.exempt_weight ? `مستثنى ${fmtNum(r.exempt_weight)} درجة` : `معلّق ${fmtNum(diag.pendingWeight)} درجة لم تُقس`,
+    })}
+    ${statCard({
+      label: 'نتيجة الجودة',
+      value: r.quality_pct === null ? '—' : `${fmtNum(r.quality_pct)}%`,
+      ico: 'star',
+      tone: (r.quality_pct ?? 0) >= 85 ? 'good' : (r.quality_pct ?? 0) >= 60 ? 'warn' : 'bad',
+      sub: bench?.scoreDelta === null || !bench?.peers ? 'على ما تم قياسه'
+        : `${bench.scoreDelta > 0 ? '+' : ''}${fmtNum(bench.scoreDelta)} عن متوسط الجمعية`,
+    })}
+    ${statCard({
+      label: 'اكتمال القياس',
+      value: `${fmtNum(r.coverage_pct)}%`,
+      ico: 'check',
+      tone: r.coverage_pct >= 90 ? 'good' : 'warn',
+      sub: 'مستقل عن نتيجة الجودة (BR-11)',
+    })}
+    ${statCard({
+      label: 'حالة البرنامج',
+      value: diag.critical ? `${diag.critical} عاجل` : diag.warning ? `${diag.warning} تحذير` : 'سليم',
+      ico: 'alert',
+      tone: diag.health === 'critical' ? 'bad' : diag.health === 'warning' ? 'warn' : 'good',
+      sub: healthLabel(diag.health),
+    })}
   </div>
+
+  ${section('التشخيص — ما الذي يحتاج تدخلك',
+    insightList(diag.findings.slice(0, 6)),
+    {
+      actions: diag.findings.length > 6
+        ? badge(`و${diag.findings.length - 6} ملاحظة أخرى`, 'muted') : '',
+    })}
 
   <div class="grid two">
-    ${section('الدرجة حسب الأقسام', table(['القسم', 'الدرجة', 'نتيجة الجودة', 'اكتمال القياس'], sectionRows),
-      { actions: `<a class="btn sec small" href="/programs/${program.id}/metric">تفصيل المقياس</a>` })}
-    ${section('فريق البرنامج', table(['الدور', 'المسؤول'],
-      team.map((t) => [roleName(t.role), esc(t.full_name)]), { empty: 'لم تُسند الأدوار بعد.' }),
-      { actions: `<a class="btn sec small" href="/programs/${program.id}/team">إدارة الأدوار</a>` })}
+    ${section('الدرجة حسب الأقسام',
+      table(['القسم', 'الدرجة', 'مقارنةً بمتوسط الجمعية'],
+        r.sections.map((sec, i) => {
+          const b = bench?.sections?.[i];
+          return [
+            esc(sec.section.name),
+            `<span class="num">${fmtNum(sec.earned)} / ${fmtNum(sec.weight)}</span>`,
+            b && b.mine !== null ? compareBar(b.mine, bench.peers ? b.peer : null)
+              : progress(sec.score_pct),
+          ];
+        })),
+      {
+        actions: `<a class="btn sec small" href="/programs/${program.id}/metric">تفصيل المقياس</a>`,
+      })}
+
+    ${section('مؤشرات التشغيل',
+      table(['البند', 'القيمة'], [
+        ['مهام معلّقة', `<span class="num">${Number(tasks?.pending || 0)}</span> ${Number(tasks?.overdue || 0) ? badge(`${tasks.overdue} متأخرة`, 'bad') : ''}`],
+        ['الطلاب', `<span class="num">${Number(students?.total || 0)}</span> ${Number(students?.withdrawn || 0) ? badge(`${students.withdrawn} منسحبون`, 'warn') : ''}`],
+        ['الشكاوى المفتوحة', `<span class="num">${Number(complaints?.open || 0)}</span> من ${Number(complaints?.total || 0)}`],
+        ['الإجراءات المفتوحة', `<span class="num">${Number(actions?.open || 0)}</span> ${Number(actions?.recurred || 0) ? badge(`${actions.recurred} تكرار`, 'bad') : ''}`],
+        ['القياسات الناقصة', `<span class="num">${missingMeasurements(program.id).length}</span>`],
+      ]))}
   </div>
 
-  ${gaps.length ? section('القياسات الناقصة', table(['القسم', 'المؤشر', 'المنفّذ/المطلوب', 'المسؤول', 'خطة العينة'],
-    gaps.map((g) => [
-      esc(g.section), esc(g.indicator.name),
-      `<span class="num">${g.completed} / ${g.required}</span>`,
-      roleName(g.indicator.owner_role),
-      `<small class="muted">${esc(g.sample_label)}</small>`,
-    ])), { actions: badge('تمنع إقفال البرنامج', 'warn') }) : ''}`;
+  ${bench && bench.peers ? section('المقارنة والمعايرة', `
+    <p class="hint">المقارنة مع ${bench.peers} برنامجًا آخر لها قياسات فعلية، بالدرجة المعيارية من 300.</p>
+    <div class="grid two">
+      <div>
+        <h3>${icon('alert', { size: 15 })} أضعف من المعتاد</h3>
+        ${bench.weakest.length ? `<ul class="evidence">${bench.weakest.map((g) => `<li>
+          ${esc(g.indicator.name)}
+          <small>عندك ${fmtNum(g.mine)}% · متوسط الجمعية ${fmtNum(g.peer)}% (${fmtNum(g.delta)})</small>
+        </li>`).join('')}</ul>` : '<p class="empty">لا يوجد مؤشر أضعف من المعتاد.</p>'}
+      </div>
+      <div>
+        <h3>${icon('star', { size: 15 })} أقوى من المعتاد</h3>
+        ${bench.strongest.length ? `<ul class="evidence">${bench.strongest.map((g) => `<li>
+          ${esc(g.indicator.name)}
+          <small>عندك ${fmtNum(g.mine)}% · متوسط الجمعية ${fmtNum(g.peer)}% (+${fmtNum(g.delta)})</small>
+        </li>`).join('')}</ul>` : '<p class="empty">لا يوجد مؤشر أقوى من المعتاد.</p>'}
+      </div>
+    </div>`) : ''}
+
+  ${section('فريق البرنامج', table(['الدور', 'المسؤول'],
+    team.map((x) => [roleName(x.role), esc(x.full_name)]), { empty: 'لم تُسند الأدوار بعد.' }),
+    { actions: `<a class="btn sec small" href="/programs/${program.id}/team">إدارة الأدوار</a>` })}`;
 }
 
 /** شجرة المقياس الكاملة. */
@@ -274,7 +338,8 @@ export default function register(router) {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const { program } = loaded;
     ctx.render(program.name, programHead(program, '', loaded.perms,
-      `<a class="btn sec small" href="/reports/program/${program.id}">تقرير البرنامج</a>`) + overview(ctx, program),
+      `<a class="btn sec small" href="/reports/program/${program.id}">تقرير البرنامج</a>`)
+      + overview(ctx, program, loaded.perms),
     { active: '/programs' });
   });
 

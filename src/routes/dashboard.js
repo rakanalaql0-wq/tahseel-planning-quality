@@ -1,50 +1,55 @@
 import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, fmtNum, today, addDays, int } from '../lib/util.js';
-import { statCard, table, section, statusBadge, dueBadge, badge, progress, evidenceList, evidenceForm, textarea } from '../views/ui.js';
+import {
+  statCard, table, section, statusBadge, dueBadge, badge, progress, evidenceList, evidenceForm,
+  textarea, insightCard, insightList, healthBadge, priorityRow,
+} from '../views/ui.js';
+import { icon } from '../views/icons.js';
+import { programDiagnostics, prioritizedTasks, portfolioHealth } from '../lib/insights.js';
 import { ROLES, roleName } from '../lib/roles.js';
 import { programsForUser, canAccessProgram } from '../lib/auth.js';
 import { tasksForUser, refreshNotifications } from '../lib/scheduler.js';
 import { computeProgram, missingMeasurements } from '../lib/scoring.js';
 import { audit } from '../lib/audit.js';
+import { recordVerificationFailures } from '../lib/actions.js';
 
-/** لوحة المستخدم — البند 4: كل دور يرى واجباته فقط. */
+/**
+ * لوحة المستخدم الذكية.
+ *
+ * الفرق عن القائمة المسطّحة: تبدأ بـ«ابدأ بهذه» — أعلى مهمة أثرًا لا أقربها تاريخًا —
+ * ثم ملاحظات تشخيصية تقول لماذا الدرجة منخفضة وما الإجراء، ثم التفاصيل.
+ */
 function dashboardBody(ctx) {
   const { user } = ctx;
   const t = tasksForUser(user.id);
   const programs = programsForUser(user);
   const now = today();
+  const isManager = user.global_role === 'admin' || user.global_role === 'quality_manager';
 
   const myRoles = all(
     'SELECT DISTINCT role FROM program_assignments WHERE user_id = ?', user.id,
   ).map((r) => r.role);
   if (user.global_role === 'quality_manager' && !myRoles.includes('quality_manager')) myRoles.push('quality_manager');
 
-  const notifs = all(
-    'SELECT * FROM notifications WHERE user_id = ? ORDER BY is_read, id DESC LIMIT 6', user.id,
-  );
+  const priority = prioritizedTasks(user.id, { limit: 5 });
+  const top = priority[0] || null;
 
-  // القياسات الناقصة في البرامج التي يعمل عليها المستخدم
-  const gaps = [];
-  for (const p of programs.filter((x) => x.status !== 'closed')) {
-    for (const g of missingMeasurements(p.id)) {
-      const mine = user.global_role === 'admin' || user.global_role === 'quality_manager'
-        || myRoles.includes(g.indicator.owner_role);
-      if (mine) gaps.push({ ...g, program: p });
-    }
+  // ملاحظات تشخيصية من البرامج المسندة، مرتبة بالخطورة ثم الأثر
+  const openPrograms = programs.filter((p) => p.status !== 'closed');
+  const diagnostics = openPrograms.map((p) => ({ p, d: programDiagnostics(p.id) }));
+  const myFindings = [];
+  for (const { p, d } of diagnostics) {
+    for (const f of d.findings) myFindings.push({ ...f, program: p });
   }
+  myFindings.sort((a, b) => ({ critical: 0, warning: 1, info: 2 }[a.severity]
+    - { critical: 0, warning: 1, info: 2 }[b.severity]) || b.impact - a.impact);
 
-  // الشواهد المطلوبة: عناصر غير متحققة بلا شاهد مرفق
-  const evidenceNeeded = programs.length ? all(
-    `SELECT v.id, v.program_id, p.name AS program_name, i.name AS indicator_name, v.completed_at
-       FROM verifications v
-       JOIN programs p ON p.id = v.program_id
-       JOIN indicators i ON i.id = v.indicator_id
-      WHERE v.status = 'submitted' AND v.completed_by = ?
-        AND EXISTS (SELECT 1 FROM verification_items vi WHERE vi.verification_id = v.id AND vi.state < 100)
-        AND NOT EXISTS (SELECT 1 FROM evidences e WHERE e.entity_type = 'verification' AND e.entity_id = v.id)
-      ORDER BY v.completed_at DESC LIMIT 10`,
-    user.id,
-  ) : [];
+  const criticalCount = myFindings.filter((f) => f.severity === 'critical').length;
+  const atRisk = myFindings.reduce((sum, f) => sum + (f.severity === 'critical' ? f.impact : 0), 0);
+
+  const notifs = all(
+    'SELECT * FROM notifications WHERE user_id = ? ORDER BY is_read, id DESC LIMIT 5', user.id,
+  );
 
   const taskRow = (task) => [
     `<a href="/tasks/${task.id}">${esc(task.title)}</a>`,
@@ -59,31 +64,71 @@ function dashboardBody(ctx) {
       <ul class="duties">${ROLES[r].duties.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>
     </div>`).join('');
 
+  // نظرة الجمعية لمدير الجودة: البرامج المهدَّدة أولًا
+  const portfolio = isManager ? portfolioHealth(programs) : [];
+
   return `
   <div class="pagehead">
     <div><h1>لوحتي</h1>
       <p class="meta">${esc(user.full_name)} — ${myRoles.map(roleName).join('، ') || 'بلا دور مسند'}</p></div>
   </div>
 
+  ${top ? `<section class="panel next-up">
+    <header class="panel-head"><h2>${icon('target', { size: 17 })} ابدأ بهذه</h2>
+      <div class="panel-actions">${badge(`أولوية ${top.priority}`, top.priority >= 70 ? 'bad' : 'warn')}</div>
+    </header>
+    <div class="panel-body">
+      <h3 style="font-size:1.05rem"><a href="/tasks/${top.id}">${esc(top.title)}</a></h3>
+      <p class="muted" style="font-size:.85rem">${esc(top.program_name)}</p>
+      <div class="prio-why" style="margin:.5rem 0">${top.reasons.map((r) => badge(r, 'warn')).join(' ')}</div>
+      <a class="btn" href="/tasks/${top.id}">${icon('check', { size: 15 })} تنفيذ الآن</a>
+    </div>
+  </section>` : ''}
+
   <div class="stats">
-    ${statCard({ label: 'واجباتي اليوم', value: t.dueToday.length, tone: t.dueToday.length ? 'warn' : '' })}
-    ${statCard({ label: 'المستحق قريبًا', value: t.soon.length, tone: 'info' })}
-    ${statCard({ label: 'المتأخر', value: t.overdue.length, tone: t.overdue.length ? 'bad' : 'good' })}
-    ${statCard({ label: 'القياسات الناقصة', value: gaps.length, tone: gaps.length ? 'warn' : 'good' })}
-    ${statCard({ label: 'الشواهد المطلوبة', value: evidenceNeeded.length, tone: evidenceNeeded.length ? 'warn' : 'good' })}
-    ${statCard({ label: 'برامجي', value: programs.length })}
+    ${statCard({ label: 'واجباتي اليوم', value: t.dueToday.length, ico: 'tasks', tone: t.dueToday.length ? 'warn' : '' })}
+    ${statCard({ label: 'المتأخر', value: t.overdue.length, ico: 'alert', tone: t.overdue.length ? 'bad' : 'good' })}
+    ${statCard({ label: 'المستحق قريبًا', value: t.soon.length, ico: 'calendar', tone: 'info' })}
+    ${statCard({
+      label: 'ملاحظات عاجلة',
+      value: criticalCount,
+      ico: 'alert',
+      tone: criticalCount ? 'bad' : 'good',
+      sub: atRisk ? `${fmtNum(atRisk)} درجة معرّضة للخطر` : '',
+    })}
+    ${statCard({ label: 'برامجي', value: programs.length, ico: 'programs' })}
   </div>
 
-  ${section('واجباتي اليوم والمتأخر',
-    table(['المهمة', 'البرنامج', 'الاستحقاق', 'الأداة'],
-      [...t.overdue, ...t.dueToday].map(taskRow),
-      { empty: 'لا توجد مهام مستحقة اليوم أو متأخرة. أحسنت.' }),
-    { actions: '<a class="btn sec small" href="/tasks">كل واجباتي</a>' })}
+  ${myFindings.length ? section('ما يحتاج انتباهك',
+    myFindings.slice(0, 6).map((f) => insightCard({
+      ...f,
+      title: `${f.title}`,
+      detail: `${f.program.name} — ${f.detail}`,
+    })).join(''),
+    { actions: myFindings.length > 6 ? badge(`و${myFindings.length - 6} ملاحظة أخرى`, 'muted') : '' })
+    : section('ما يحتاج انتباهك', insightList([], { empty: 'لا توجد ملاحظات عاجلة على برامجك.' }))}
+
+  ${priority.length > 1 ? section('مهامك بترتيب الأولوية',
+    `<ul class="prio-list">${priority.map((task) => priorityRow(task)).join('')}</ul>
+     <p class="hint">الترتيب بالأثر لا بالتاريخ: وزن المؤشر في المقياس، والتأخر، وقرب انتهاء الفرصة.</p>`,
+    { actions: '<a class="btn sec small" href="/tasks">كل واجباتي</a>' }) : ''}
+
+  ${isManager && portfolio.length ? section('صحة البرامج — نظرة الجمعية',
+    table(['البرنامج', 'الحالة', 'أبرز ملاحظة', 'الدرجة', 'الاكتمال'],
+      portfolio.slice(0, 8).map((x) => [
+        `<a href="/programs/${x.program.id}">${esc(x.program.name)}</a>`,
+        healthBadge(x.health),
+        x.top ? `<small>${esc(x.top.title)}</small>` : '<small class="muted">—</small>',
+        `<span class="num">${fmtNum(x.score)}</span>`,
+        progress(x.coverage),
+      ]), { empty: 'لا توجد برامج قائمة.' }),
+    { actions: '<a class="btn sec small" href="/reports">مركز التقارير</a>' }) : ''}
 
   <div class="grid two">
-    ${section('المستحق قريبًا (7 أيام)',
-      table(['المهمة', 'البرنامج', 'الاستحقاق', 'الأداة'], t.soon.map(taskRow),
-        { empty: 'لا توجد مهام مستحقة خلال الأسبوع القادم.' }))}
+    ${section('واجباتي اليوم والمتأخر',
+      table(['المهمة', 'البرنامج', 'الاستحقاق', 'الأداة'],
+        [...t.overdue, ...t.dueToday].slice(0, 8).map(taskRow),
+        { empty: 'لا توجد مهام مستحقة اليوم أو متأخرة. أحسنت.' }))}
 
     ${section('آخر التنبيهات',
       notifs.length ? `<ul class="evidence">${notifs.map((n) => `<li>
@@ -93,31 +138,15 @@ function dashboardBody(ctx) {
       { actions: '<a class="btn sec small" href="/notifications">الكل</a>' })}
   </div>
 
-  ${gaps.length ? section('القياسات الناقصة المرتبطة بدوري',
-    table(['البرنامج', 'المؤشر', 'المنفّذ/المطلوب', 'خطة العينة'],
-      gaps.slice(0, 15).map((g) => [
-        `<a href="/programs/${g.program.id}/metric">${esc(g.program.name)}</a>`,
-        esc(g.indicator.name),
-        `<span class="num">${g.completed} / ${g.required}</span>`,
-        `<small class="muted">${esc(g.sample_label)}</small>`,
-      ])) ) : ''}
-
-  ${evidenceNeeded.length ? section('الشواهد المطلوبة',
-    table(['البرنامج', 'المؤشر', 'تاريخ التحقق', ''],
-      evidenceNeeded.map((e) => [
-        esc(e.program_name), esc(e.indicator_name), fmtDate(e.completed_at),
-        `<a class="btn sec small" href="/verifications/${e.id}">إرفاق شاهد</a>`,
-      ]))) : ''}
-
   ${section('برامجي',
-    table(['البرنامج', 'الفترة', 'الحالة', 'الدرجة من 300', 'اكتمال القياس'],
+    table(['البرنامج', 'الفترة', 'الحالة', 'الدرجة', 'اكتمال القياس'],
       programs.slice(0, 10).map((p) => {
         const r = computeProgram(p.id);
         return [
           `<a href="/programs/${p.id}">${esc(p.name)}</a>`,
           `<small class="muted">${fmtDate(p.start_date)} — ${fmtDate(p.end_date)}</small>`,
           statusBadge(p.status),
-          `<span class="num">${fmtNum(r?.earned)} / 300</span>`,
+          `<span class="num">${fmtNum(r?.earned)} / ${fmtNum(r?.total_weight)}</span>`,
           progress(r?.coverage_pct),
         ];
       }), { empty: 'لم يُسند إليك أي برنامج بعد.' }))}
@@ -305,17 +334,20 @@ export default function register(router) {
     run(`UPDATE tasks SET status = 'done', completed_at = datetime('now'), ref_type = 'verification', ref_id = ?
           WHERE id = ?`, verification.id, task.id);
 
-    // إجراءات تصحيحية للعناصر غير المتحققة
+    // إجراءات تصحيحية ذكية: المشكلة الواحدة إجراء واحد بعدّاد تكرار،
+    // وعودتها بعد إغلاق إجراءها تُفتح كـ«تكرار» بأولوية أعلى.
+    let actionSummary = null;
     if (ctx.body.auto_action) {
       const ind = get('SELECT name FROM indicators WHERE id = ?', task.indicator_id);
-      for (const s of saved.filter((x) => x.state === 0)) {
-        run(`INSERT INTO corrective_actions (program_id, kind, origin_type, origin_id, title, description, owner_id, due_date, created_by)
-             VALUES (?, 'corrective', 'verification', ?, ?, ?, ?, ?, ?)`,
-          task.program_id, verification.id,
-          `معالجة: ${s.item.text}`.slice(0, 180),
-          `نتج عن تحقق «${ind?.name || ''}». الملاحظة: ${s.note}`,
-          task.assigned_user_id, addDays(today(), 7), ctx.user.id);
-      }
+      actionSummary = recordVerificationFailures({
+        programId: task.program_id,
+        indicatorId: task.indicator_id,
+        indicatorName: ind?.name || '',
+        failures: saved.filter((x) => x.state < 100),
+        ownerId: task.assigned_user_id,
+        userId: ctx.user.id,
+        verificationId: verification.id,
+      });
     }
 
     audit({
@@ -323,7 +355,15 @@ export default function register(router) {
       programId: task.program_id, after: { score_pct: scorePct, items: saved.map((s) => ({ item: s.item.code, state: s.state })) }, ip: ctx.ip,
     });
     refreshNotifications({ programId: task.program_id });
-    ctx.redirect(`/verifications/${verification.id}`, `تم اعتماد التحقق — النتيجة ${fmtNum(scorePct)}%.`);
+    let msg = `تم اعتماد التحقق — النتيجة ${fmtNum(scorePct)}%.`;
+    if (actionSummary) {
+      const parts = [];
+      if (actionSummary.created) parts.push(`${actionSummary.created} إجراءً جديدًا`);
+      if (actionSummary.merged) parts.push(`${actionSummary.merged} مشكلة متكررة دُمجت في إجراء قائم`);
+      if (actionSummary.recurred) parts.push(`${actionSummary.recurred} مشكلة عادت بعد إغلاق إجراءها`);
+      if (parts.length) msg += ` (${parts.join('، ')})`;
+    }
+    ctx.redirect(`/verifications/${verification.id}`, msg);
   });
 
   router.post('/tasks/:id/complete', (ctx) => {

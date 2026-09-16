@@ -1,35 +1,61 @@
 import { all, get } from '../db/index.js';
 import { esc, fmtDate, fmtNum, toCsv } from '../lib/util.js';
-import { table, section, statusBadge, badge, progress, statCard } from '../views/ui.js';
+import { table, section, statusBadge, badge, progress, statCard, insightCard, insightList, compareBar } from '../views/ui.js';
 import { send } from '../lib/http.js';
 import { roleName } from '../lib/roles.js';
 import { programsForUser, canAccessProgram } from '../lib/auth.js';
 import { computeProgram, missingMeasurements, notMetItems } from '../lib/scoring.js';
+import { termTrend, weakestIndicators, programBenchmark } from '../lib/benchmark.js';
+import { portfolioHealth, programDiagnostics } from '../lib/insights.js';
 import { programImpact } from '../lib/impact.js';
 import { impactKindLabel } from '../db/framework.js';
 
-/** مقارنة البرامج — البند 11 (UC-06): فصل النتيجة عن اكتمال القياس. */
-function comparison(ctx) {
+/**
+ * مركز التقارير الموحّد.
+ * كل ما يخص القراءة والمقارنة والتصدير في مكان واحد بدل توزّعها على شاشات.
+ */
+function reportsCenter(ctx) {
   const programs = programsForUser(ctx.user);
-  const rows = programs.map((p) => {
-    const r = computeProgram(p.id);
-    return { p, r };
-  });
+  const rows = programs.map((p) => ({ p, r: computeProgram(p.id) }));
   const closed = rows.filter((x) => x.p.status === 'closed');
   const avgScore = closed.length
     ? closed.reduce((s, x) => s + (x.r.normalized_score ?? x.r.earned), 0) / closed.length : null;
 
+  const trend = termTrend();
+  const weakest = weakestIndicators(5);
+  const portfolio = portfolioHealth(programs);
+  const atRisk = portfolio.filter((x) => x.health === 'critical');
+
   return `
-  <div class="pagehead"><div><h1>التقارير ولوحات المؤشرات</h1>
-    <p class="meta">مقارنة البرامج والفترات — النتيجة منفصلة عن اكتمال القياس (BR-11).
-      المقارنة العادلة بين برامج مختلفة الاستثناءات تكون بـ«الدرجة المعيارية من 300».</p></div></div>
+  <div class="pagehead"><div><h1>مركز التقارير</h1>
+    <p class="meta">المقارنة والمعايرة والاتجاه والتصدير — النتيجة منفصلة عن اكتمال القياس (BR-11)</p></div></div>
+
   <div class="stats">
-    ${statCard({ label: 'البرامج', value: rows.length })}
-    ${statCard({ label: 'برامج مغلقة', value: closed.length })}
-    ${statCard({ label: 'متوسط الدرجة النهائية', value: avgScore === null ? '—' : `${fmtNum(avgScore)} / 300`, tone: 'info' })}
+    ${statCard({ label: 'البرامج', value: rows.length, ico: 'programs' })}
+    ${statCard({ label: 'برامج مغلقة', value: closed.length, ico: 'check' })}
+    ${statCard({
+      label: 'متوسط الجودة',
+      value: avgScore === null ? '—' : `${fmtNum(avgScore)} / 300`,
+      ico: 'metric', tone: 'info', sub: 'بالدرجة المعيارية',
+    })}
+    ${statCard({
+      label: 'برامج تحتاج تدخلًا',
+      value: atRisk.length, ico: 'alert',
+      tone: atRisk.length ? 'bad' : 'good',
+    })}
   </div>
+
+  ${atRisk.length ? section('برامج تحتاج تدخلًا عاجلًا',
+    atRisk.slice(0, 4).map((x) => insightCard({
+      severity: 'critical',
+      title: x.program.name,
+      detail: x.top ? `${x.top.title} — ${x.top.detail}` : `${x.critical} ملاحظة عاجلة`,
+      href: `/programs/${x.program.id}`,
+      action: 'فتح البرنامج',
+    })).join('')) : ''}
+
   ${section('مقارنة البرامج', table(
-    ['البرنامج', 'الفترة', 'الحالة', 'الدرجة المحققة', 'المعيارية من 300', 'نتيجة الجودة', 'اكتمال القياس', 'القسم 1', 'القسم 2', 'القسم 3', ''],
+    ['البرنامج', 'الفترة', 'الحالة', 'الدرجة المحققة', 'المعيارية من 300', 'نتيجة الجودة', 'اكتمال القياس', ''],
     rows.map(({ p, r }) => [
       `<a href="/programs/${p.id}">${esc(p.name)}</a>`,
       `<small class="muted">${esc(p.term || '')} ${fmtDate(p.start_date)}</small>`,
@@ -38,21 +64,31 @@ function comparison(ctx) {
         + (r.exempt_weight ? `<br>${badge(`مستثنى ${fmtNum(r.exempt_weight)}`, 'muted')}` : ''),
       `<span class="num">${r.normalized_score === null ? '—' : fmtNum(r.normalized_score)}</span>`,
       progress(r.quality_pct), progress(r.coverage_pct),
-      ...r.sections.map((s) => `<span class="num">${fmtNum(s.earned)}/${fmtNum(s.weight)}</span>`),
       `<a class="btn sec small" href="/reports/program/${p.id}">التقرير</a>`,
     ]), { empty: 'لا توجد برامج.' }),
     { actions: '<a class="btn sec small" href="/reports/programs.csv">تصدير Excel</a>' })}
-  ${section('اتجاه الجودة عبر الفترات', table(['الفترة', 'عدد البرامج', 'متوسط الدرجة', 'متوسط الاكتمال'],
-    Object.entries(rows.reduce((acc, { p, r }) => {
-      const key = p.term || 'غير محدد';
-      acc[key] = acc[key] || { n: 0, score: 0, cov: 0 };
-      acc[key].n += 1; acc[key].score += (r.normalized_score ?? r.earned); acc[key].cov += r.coverage_pct;
-      return acc;
-    }, {})).map(([term, v]) => [
-      esc(term), `<span class="num">${v.n}</span>`,
-      `<span class="num">${fmtNum(v.score / v.n)} / 300</span>`,
-      progress(v.cov / v.n),
-    ]), { empty: 'لا توجد بيانات.' }))}`;
+
+  <div class="grid two">
+    ${section('اتجاه الأداء عبر الفترات', table(
+      ['الفترة', 'البرامج', 'متوسط الدرجة', 'التغيّر', 'متوسط الاكتمال'],
+      trend.map((t) => [
+        esc(t.term), `<span class="num">${t.programs}</span>`,
+        `<span class="num">${fmtNum(t.avgScore)} / 300</span>`,
+        t.delta === null ? '<span class="muted">—</span>'
+          : badge(`${t.delta > 0 ? '▲ +' : t.delta < 0 ? '▼ ' : ''}${fmtNum(t.delta)}`,
+            t.delta > 0 ? 'good' : t.delta < 0 ? 'bad' : 'muted'),
+        progress(t.avgCoverage),
+      ]), { empty: 'تحتاج فترتين على الأقل لرسم الاتجاه.' }),
+      { actions: badge('هل نتحسّن؟', 'muted') })}
+
+    ${section('أضعف المؤشرات على مستوى الجمعية',
+      weakest.length ? `<ul class="evidence">${weakest.map((w) => `<li>
+        ${esc(w.indicator.name)}
+        <small>متوسط ${fmtNum(w.avg)}% عبر ${w.programs} برنامجًا · وزنه ${fmtNum(w.indicator.weight)} درجة</small>
+      </li>`).join('')}</ul>
+      <p class="hint">ضعف متكرر في كل البرامج يعني خللًا مؤسسيًا لا خطأ برنامج واحد.</p>`
+        : '<p class="empty">لا توجد بيانات كافية للمعايرة.</p>')}
+  </div>`;
 }
 
 /** تقرير برنامج كامل قابل للطباعة كـ PDF. */
@@ -210,7 +246,7 @@ function programCsv(program) {
 }
 
 export default function register(router) {
-  router.get('/reports', (ctx) => ctx.render('التقارير', comparison(ctx), { active: '/reports', wide: true }));
+  router.get('/reports', (ctx) => ctx.render('مركز التقارير', reportsCenter(ctx), { active: '/reports', wide: true }));
 
   router.get('/reports/program/:pid', (ctx) => {
     const program = get(

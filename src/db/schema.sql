@@ -348,8 +348,13 @@ CREATE TABLE IF NOT EXISTS corrective_actions (
   created_by  INTEGER REFERENCES users(id),
   created_at  TEXT NOT NULL DEFAULT (datetime('now')),
   closed_at   TEXT,
-  close_note  TEXT
+  close_note  TEXT,
+  group_key        TEXT,                        -- مفتاح تجميع المشكلة الواحدة
+  occurrence_count INTEGER NOT NULL DEFAULT 1,  -- كم مرة تكررت
+  recurred         INTEGER NOT NULL DEFAULT 0   -- عادت بعد إغلاق إجراء سابق
 );
+
+CREATE INDEX IF NOT EXISTS ix_actions_group ON corrective_actions(program_id, group_key);
 
 -- ------------------------------ الشواهد والتنبيهات والتدقيق ----------
 

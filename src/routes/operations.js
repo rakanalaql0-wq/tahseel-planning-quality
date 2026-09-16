@@ -1,12 +1,14 @@
 import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, int, today, addDays } from '../lib/util.js';
 import {
-  table, section, statusBadge, badge, select, field, input, textarea, evidenceList, evidenceForm, statCard, progress,
+  table, section, statusBadge, badge, select, field, input, textarea, evidenceList, evidenceForm,
+  statCard, progress, insightCard,
 } from '../views/ui.js';
 import { can } from '../lib/roles.js';
 import { audit } from '../lib/audit.js';
 import { scheduleMainActivityTask, refreshNotifications } from '../lib/scheduler.js';
 import { loadProgram, ensureOpen, programHead } from './_helpers.js';
+import { prioritizedActions } from '../lib/actions.js';
 
 const SLA_DEFAULT = 5;
 
@@ -522,10 +524,7 @@ export default function register(router) {
   router.get('/programs/:id/actions', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const { program, perms } = loaded;
-    const rows = all(
-      `SELECT a.*, u.full_name AS owner_name FROM corrective_actions a
-         LEFT JOIN users u ON u.id = a.owner_id WHERE a.program_id = ? ORDER BY a.due_date`, program.id,
-    );
+    const rows = prioritizedActions(program.id);
     const team = all(
       `SELECT u.id, u.full_name FROM program_assignments a JOIN users u ON u.id = a.user_id
         WHERE a.program_id = ? GROUP BY u.id ORDER BY u.full_name`, program.id,
@@ -535,8 +534,12 @@ export default function register(router) {
     const cols = [
       ['open', 'مفتوح'], ['in_progress', 'قيد التنفيذ'], ['done', 'منجز'], ['cancelled', 'ملغى'],
     ];
-    const card = (a) => `<div class="card">
+    const card = (a) => `<div class="card${a.recurred ? ' recurred' : ''}">
       <div class="t">${esc(a.title)}</div>
+      <div style="margin:.2rem 0">
+        ${a.recurred ? badge('تكرار بعد المعالجة', 'bad') : ''}
+        ${Number(a.occurrence_count || 1) > 1 ? badge(`تكرر ${a.occurrence_count}×`, 'warn') : ''}
+      </div>
       <small>${a.kind === 'improvement' ? 'تحسيني' : 'تصحيحي'} · ${esc(a.owner_name || 'بلا مسؤول')} ·
         ${a.due_date ? (a.due_date < now && a.status !== 'done' ? `<span style="color:var(--bad)">${fmtDate(a.due_date)}</span>` : fmtDate(a.due_date)) : 'بلا موعد'}</small>
       ${a.description ? `<div><small class="muted">${esc(a.description).slice(0, 160)}</small></div>` : ''}
@@ -546,7 +549,14 @@ export default function register(router) {
         <button class="btn small sec">نقل</button></form>` : ''}
     </div>`;
 
+    const recurredList = rows.filter((a) => a.recurred && a.status !== 'done' && a.status !== 'cancelled');
     ctx.render('الإجراءات التصحيحية والتحسينية', programHead(program, 'actions', perms) + `
+      ${recurredList.length ? section('مشكلات عادت بعد إغلاق إجراءها',
+        recurredList.map((a) => insightCard({
+          severity: 'critical',
+          title: a.title,
+          detail: 'عولجت سابقًا ثم تكررت — الإجراء السابق لم يعالج السبب الجذري. راجع كفايته لا تكراره.',
+        })).join('')) : ''}
       ${section('لوحة الإجراءات', `<div class="kanban">${cols.map(([key, label]) => `
         <div class="col"><h3>${esc(label)} (${rows.filter((a) => a.status === key).length})</h3>
         ${rows.filter((a) => a.status === key).map(card).join('') || '<p class="empty">—</p>'}</div>`).join('')}</div>`)}

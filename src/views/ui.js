@@ -128,3 +128,75 @@ export function evidenceForm(entityType, entityId, backTo) {
     <button class="btn small">إضافة شاهد</button>
   </form>`;
 }
+
+// ------------------------------ مكوّنات التشخيص ------------------------------
+
+const SEVERITY = {
+  critical: { ico: 'alert', label: 'عاجل', cls: 'crit' },
+  warning: { ico: 'alert', label: 'تحذير', cls: 'warn' },
+  info: { ico: 'star', label: 'ملاحظة', cls: 'info' },
+};
+
+/** بطاقة ملاحظة تشخيصية: سبب + رقم + إجراء قابل للنقر. */
+export function insightCard(f) {
+  const s = SEVERITY[f.severity] || SEVERITY.info;
+  return `<article class="insight ${s.cls}">
+    <span class="ins-ico">${icon(s.ico, { size: 18 })}</span>
+    <div class="ins-body">
+      <h3>${esc(f.title)}</h3>
+      <p>${esc(f.detail)}</p>
+    </div>
+    ${f.href ? `<a class="btn sec small ins-act" href="${esc(f.href)}">${esc(f.action || 'معالجة')}</a>` : ''}
+  </article>`;
+}
+
+/** قائمة الملاحظات، أو رسالة اطمئنان إن لم توجد. */
+export function insightList(findings, { empty = 'لا توجد ملاحظات — البرنامج على المسار.' } = {}) {
+  if (!findings.length) {
+    return `<div class="insight good">
+      <span class="ins-ico">${icon('check', { size: 18 })}</span>
+      <div class="ins-body"><h3>${esc(empty)}</h3></div>
+    </div>`;
+  }
+  return findings.map(insightCard).join('');
+}
+
+/** وسم صحة البرنامج. */
+export function healthBadge(health) {
+  const map = {
+    critical: ['يحتاج تدخلًا عاجلًا', 'bad'],
+    warning: ['يحتاج متابعة', 'warn'],
+    good: ['على المسار', 'good'],
+  };
+  const [text, tone] = map[health] || ['—', 'muted'];
+  return badge(text, tone);
+}
+
+/** مقارنة قيمة بمعيار: شريط مزدوج يوضح الفرق. */
+export function compareBar(mine, peer, { label = '' } = {}) {
+  if (mine === null || mine === undefined) return '<span class="muted">—</span>';
+  const m = Math.max(0, Math.min(100, Number(mine)));
+  const p = peer === null || peer === undefined ? null : Math.max(0, Math.min(100, Number(peer)));
+  const delta = p === null ? null : m - p;
+  const tone = delta === null ? '' : delta >= 2 ? 'good' : delta <= -2 ? 'bad' : 'warn';
+  return `<div class="cmp">
+    <div class="cmp-bar">
+      <div class="cmp-fill ${tone}" style="width:${m.toFixed(1)}%"></div>
+      ${p === null ? '' : `<span class="cmp-peer" style="inset-inline-start:${p.toFixed(1)}%" title="متوسط الجمعية ${fmtNum(p)}%"></span>`}
+    </div>
+    <span class="cmp-num num">${fmtNum(m)}%${delta === null ? '' : ` <small class="${tone}">${delta > 0 ? '+' : ''}${fmtNum(delta)}</small>`}</span>
+    ${label ? `<small class="muted">${esc(label)}</small>` : ''}
+  </div>`;
+}
+
+/** صف مهمة بأولوية محسوبة وسبب الأولوية. */
+export function priorityRow(task, { showProgram = true } = {}) {
+  const tone = task.priority >= 70 ? 'bad' : task.priority >= 40 ? 'warn' : 'info';
+  return `<li class="prio ${tone}">
+    <div class="prio-main">
+      <a href="/tasks/${task.id}">${esc(task.title)}</a>
+      ${showProgram ? `<small class="muted">${esc(task.program_name)}</small>` : ''}
+    </div>
+    <div class="prio-why">${task.reasons.map((r) => badge(r, tone)).join(' ')}</div>
+  </li>`;
+}

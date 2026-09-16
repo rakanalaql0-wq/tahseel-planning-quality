@@ -574,3 +574,85 @@ test('الهوية البصرية: الشعار وألوان الجمعية مط
   const home = await (await fetch(`${BASE}/`)).text();
   assert.match(home, /logo\.svg/, 'الشعار معروض في الصفحة الرئيسية');
 });
+
+// ------------------------------ الذكاء والتنظيم ---------------------------
+
+test('اللوحة تبدأ بـ«ابدأ بهذه» وتعرض تشخيصًا لا قوائم فقط', async () => {
+  const cookie = await login('officer');
+  const body = await (await fetchAs(cookie, '/app')).text();
+  assert.match(body, /ابدأ بهذه/, 'توصية بأعلى مهمة أثرًا');
+  assert.match(body, /ما يحتاج انتباهك/, 'قسم التشخيص');
+  assert.match(body, /مهامك بترتيب الأولوية/, 'ترتيب بالأولوية لا بالتاريخ');
+  assert.match(body, /class="insight/, 'بطاقات تشخيصية');
+});
+
+test('نظرة البرنامج تعرض التشخيص والمقارنة بدل سرد الأرقام', async () => {
+  const cookie = await login('manager');
+  const body = await (await fetchAs(cookie, '/programs/1')).text();
+  assert.match(body, /التشخيص — ما الذي يحتاج تدخلك/);
+  assert.match(body, /حالة البرنامج/);
+  assert.match(body, /class="insight/);
+});
+
+test('مركز التقارير يجمع المقارنة والاتجاه والمعايرة', async () => {
+  const cookie = await login('manager');
+  const body = await (await fetchAs(cookie, '/reports')).text();
+  assert.match(body, /مركز التقارير/);
+  assert.match(body, /مقارنة البرامج/);
+  assert.match(body, /اتجاه الأداء عبر الفترات/);
+  assert.match(body, /أضعف المؤشرات على مستوى الجمعية/);
+  assert.match(body, /المعيارية من 300/);
+});
+
+test('تبويبات البرنامج مجمّعة في أقسام مسمّاة', async () => {
+  const cookie = await login('admin');
+  const body = await (await fetchAs(cookie, '/programs/1')).text();
+  assert.match(body, /class="subnav-group"/, 'التبويبات داخل مجموعات');
+  for (const group of ['التشغيل', 'القياس', 'المتابعة', 'الإدارة']) {
+    assert.match(body, new RegExp(`g-label">${group}`), `مجموعة «${group}» ظاهرة`);
+  }
+});
+
+test('الإجراءات المتكررة تُدمج وتُوسم في لوحة الإجراءات', async () => {
+  const supervisor = await login('supervisor');
+
+  // أخفق نفس العنصر في قياسين متتاليين لنفس المؤشر
+  const fail = async () => {
+    const tasks = await (await fetchAs(supervisor, '/tasks')).text();
+    const ids = [...tasks.matchAll(/href="\/tasks\/(\d+)"/g)].map((m) => m[1]);
+    for (const id of ids) {
+      const form = await (await fetchAs(supervisor, `/tasks/${id}`)).text();
+      if (!/نظافة القاعات والمرافق/.test(form)) continue;
+      const items = [...new Set([...form.matchAll(/name="state_(\d+)"/g)].map((m) => m[1]))];
+      if (!items.length) continue;
+      const params = new URLSearchParams();
+      items.forEach((it, i) => {
+        params.set(`state_${it}`, i === 0 ? '0' : '100');
+        if (i === 0) params.set(`note_${it}`, 'حاويات النفايات ممتلئة');
+      });
+      params.set('auto_action', '1');
+      const res = await fetchAs(supervisor, `/tasks/${id}/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: params,
+      });
+      return decodeURIComponent(res.headers.getSetCookie().find((c) => c.startsWith('tpq_flash=')) || '');
+    }
+    return null;
+  };
+
+  const first = await fail();
+  assert.ok(first, 'نُفّذ قياس أول');
+  assert.match(first, /إجراءً جديدًا|دُمجت في إجراء قائم/);
+
+  const second = await fail();
+  assert.ok(second, 'نُفّذ قياس ثانٍ');
+  assert.match(second, /دُمجت في إجراء قائم/, 'المشكلة نفسها تُدمج في إجراء واحد لا تتكرر');
+
+  const board = await (await fetchAs(supervisor, '/programs/1/actions')).text();
+  assert.match(board, /تكرر \d+×/, 'عدّاد التكرار ظاهر على البطاقة');
+
+  // ولا تتضاعف البطاقات: عنوان المشكلة يظهر مرة واحدة فقط
+  const occurrences = (board.match(/حاويات النفايات|معالجة: حاويات/g) || []).length;
+  assert.ok(occurrences <= 2, `المشكلة الواحدة بطاقة واحدة، وُجدت ${occurrences} مرة`);
+});

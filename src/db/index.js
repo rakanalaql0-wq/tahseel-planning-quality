@@ -29,6 +29,9 @@ const COLUMN_MIGRATIONS = [
   ['discipline_cases', 'followup_at', 'TEXT'],     // تاريخ جلسة المتابعة
   ['discipline_cases', 'followup_note', 'TEXT'],
   ['programs', 'is_public', 'INTEGER NOT NULL DEFAULT 1'], // الإعلان في الموقع العام
+  ['corrective_actions', 'group_key', 'TEXT'],              // تجميع المشكلة المتكررة
+  ['corrective_actions', 'occurrence_count', 'INTEGER NOT NULL DEFAULT 1'],
+  ['corrective_actions', 'recurred', 'INTEGER NOT NULL DEFAULT 0'],
 ];
 
 function migrate(handle) {
