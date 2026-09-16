@@ -24,8 +24,8 @@ function programsList(ctx) {
       `<small class="muted">${fmtDate(p.start_date)} — ${fmtDate(p.end_date)}</small>`,
       statusBadge(p.status),
       `<span class="num">${fmtNum(r?.earned)} / 300</span>`,
-      progress(r?.quality_pct, { label: 'الجودة' }),
-      progress(r?.coverage_pct, { label: 'الاكتمال' }),
+      progress(r?.quality_pct),
+      progress(r?.coverage_pct),
     ];
   });
 
@@ -81,8 +81,8 @@ function overview(ctx, program) {
   const sectionRows = (r?.sections || []).map((s) => [
     esc(s.section.name),
     `<span class="num">${fmtNum(s.earned)} / ${fmtNum(s.weight)}</span>`,
-    progress(s.score_pct, { label: 'الجودة' }),
-    progress(s.coverage_pct, { label: 'الاكتمال' }),
+    progress(s.score_pct),
+    progress(s.coverage_pct),
   ]);
 
   return `
@@ -273,14 +273,14 @@ export default function register(router) {
   router.get('/programs/:id', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const { program } = loaded;
-    ctx.render(program.name, programHead(program, '',
+    ctx.render(program.name, programHead(program, '', loaded.perms,
       `<a class="btn sec small" href="/reports/program/${program.id}">تقرير البرنامج</a>`) + overview(ctx, program),
     { active: '/programs' });
   });
 
   router.get('/programs/:id/metric', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
-    ctx.render('المقياس', programHead(loaded.program, 'metric') + metricView(ctx, loaded.program, loaded.perms),
+    ctx.render('المقياس', programHead(loaded.program, 'metric', loaded.perms) + metricView(ctx, loaded.program, loaded.perms),
       { active: '/programs', wide: true });
   });
 
@@ -301,7 +301,7 @@ export default function register(router) {
       "SELECT * FROM tasks WHERE program_id = ? AND indicator_id = ? AND status = 'pending' ORDER BY due_date",
       program.id, ind.id,
     );
-    ctx.render(ind.name, programHead(program, 'metric') + `
+    ctx.render(ind.name, programHead(program, 'metric', loaded.perms) + `
       <h2>${esc(ind.name)} <small class="muted">${esc(ind.code)}</small></h2>
       ${ind.description ? `<p class="hint">${esc(ind.description)}</p>` : ''}
       ${section('القياسات المنفّذة', table(['التاريخ', 'اللقاء', 'المنفّذ', 'النتيجة', ''],
@@ -390,7 +390,7 @@ export default function register(router) {
     const venues = all('SELECT * FROM venues ORDER BY name');
     const teachers = all('SELECT * FROM teachers ORDER BY full_name');
     const editable = can(perms, 'session.manage') && program.status !== 'closed';
-    ctx.render('اللقاءات', programHead(program, 'sessions') + `
+    ctx.render('اللقاءات', programHead(program, 'sessions', perms) + `
       ${section(`اللقاءات (${rows.length} من ${program.planned_sessions} مخططة)`,
         table(['#', 'العنوان', 'التاريخ', 'القاعة', 'المعلم', 'الحالة', 'قياسات مجدولة'],
           rows.map((s) => [
@@ -446,7 +446,7 @@ export default function register(router) {
     const { program, perms } = loaded;
     const rows = all('SELECT * FROM students WHERE program_id = ? ORDER BY full_name', program.id);
     const editable = can(perms, 'student.manage') && program.status !== 'closed';
-    ctx.render('الطلاب', programHead(program, 'students') + `
+    ctx.render('الطلاب', programHead(program, 'students', perms) + `
       ${section(`الطلاب (${rows.length})`, table(['الاسم', 'الجوال', 'الحالة', 'تاريخ الانضمام', 'سبب الانسحاب'],
         rows.map((s) => [esc(s.full_name), esc(s.phone || '—'), statusBadge(s.status), fmtDate(s.joined_at), esc(s.withdraw_reason || '—')]),
         { empty: 'لم يُسجَّل طلاب بعد.' }))}
@@ -476,7 +476,7 @@ export default function register(router) {
     const plan = get('SELECT * FROM plans WHERE program_id = ?', program.id) || {};
     const evid = all("SELECT * FROM evidences WHERE entity_type = 'plan' AND entity_id = ? ORDER BY id DESC", program.id);
     const editable = can(perms, 'plan.review') && program.status !== 'closed';
-    ctx.render('الخطة والمحتوى', programHead(program, 'plan') + `
+    ctx.render('الخطة والمحتوى', programHead(program, 'plan', perms) + `
       ${section('الخطة المعتمدة', editable ? `
         <form method="post" action="/programs/${program.id}/plan">
           ${field('الأهداف', textarea('objectives', { value: plan.objectives || '', rows: 3 }))}
@@ -529,7 +529,7 @@ export default function register(router) {
     );
     const users = all("SELECT * FROM users WHERE is_active = 1 ORDER BY full_name");
     const editable = can(perms, 'program.assign');
-    ctx.render('الفريق والأدوار', programHead(program, 'team') + `
+    ctx.render('الفريق والأدوار', programHead(program, 'team', perms) + `
       ${section('الأدوار المسندة', table(['الدور', 'المسؤول', 'الحساب', ''],
         rows.map((a) => [
           roleName(a.role), esc(a.full_name), `<code>${esc(a.username)}</code>`,
@@ -582,7 +582,7 @@ export default function register(router) {
   router.get('/programs/:id/audit', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const rows = auditForProgram(loaded.program.id, 300);
-    ctx.render('سجل التدقيق', programHead(loaded.program, 'audit') + section('آخر 300 عملية',
+    ctx.render('سجل التدقيق', programHead(loaded.program, 'audit', loaded.perms) + section('آخر 300 عملية',
       table(['التاريخ', 'المستخدم', 'العملية', 'الكيان', 'التفاصيل'],
         rows.map((a) => [
           `<small class="num">${esc(a.created_at)}</small>`, esc(a.user_name || '—'), `<code>${esc(a.action)}</code>`,
@@ -600,7 +600,7 @@ export default function register(router) {
     const blocker = (label, list, render) => section(`${label} (${list.length})`,
       list.length ? `<ul class="duties">${list.map(render).join('')}</ul>` : '<p class="empty">لا توجد ملاحظات.</p>');
 
-    ctx.render('إقفال البرنامج', programHead(program, 'close') + `
+    ctx.render('إقفال البرنامج', programHead(program, 'close', perms) + `
       <div class="stats">
         ${statCard({ label: 'اكتمال القياس', value: `${fmtNum(r.coverage_pct)}%`, tone: r.coverage_pct >= 100 ? 'good' : 'warn' })}
         ${statCard({ label: 'الدرجة من 300', value: fmtNum(score?.earned) })}

@@ -2,27 +2,52 @@ import { get } from '../db/index.js';
 import { canAccessProgram, programPerms, rolesInProgram } from '../lib/auth.js';
 import { can } from '../lib/roles.js';
 import { esc, fmtDate } from '../lib/util.js';
-import { statusBadge, subnav } from '../views/ui.js';
+import { statusBadge } from '../views/ui.js';
+import { icon } from '../views/icons.js';
 
+/**
+ * تبويبات البرنامج.
+ * لكل تبويب الصلاحية اللازمة لرؤيته — فلا يُعرض للمستخدم ما لا يملك صلاحيته.
+ * `perm: null` يعني متاح لكل من أُسند إليه البرنامج.
+ * `anyPerm` يعني يكفي امتلاك واحدة من الصلاحيات.
+ */
 export const PROGRAM_TABS = [
-  ['', 'نظرة عامة'],
-  ['metric', 'المقياس والدرجة'],
-  ['sessions', 'اللقاءات'],
-  ['students', 'الطلاب'],
-  ['attendance', 'الحضور'],
-  ['plan', 'الخطة والمحتوى'],
-  ['teachers', 'المعلمون'],
-  ['activities', 'الأنشطة'],
-  ['surveys', 'الاستبانات'],
-  ['impact', 'قياس الأثر'],
-  ['complaints', 'الشكاوى'],
-  ['discipline', 'المتابعة والانضباط'],
-  ['continuity', 'الاستمرارية'],
-  ['actions', 'الإجراءات'],
-  ['team', 'الفريق والأدوار'],
-  ['audit', 'سجل التدقيق'],
-  ['close', 'إقفال البرنامج'],
+  { key: '', label: 'نظرة عامة', ico: 'home', perm: null },
+  { key: 'metric', label: 'المقياس والدرجة', ico: 'metric', perm: null },
+  { key: 'sessions', label: 'اللقاءات', ico: 'sessions', perm: 'session.manage' },
+  { key: 'students', label: 'الطلاب', ico: 'students', perm: 'student.manage' },
+  { key: 'attendance', label: 'الحضور', ico: 'attendance', perm: 'attendance.manage' },
+  { key: 'plan', label: 'الخطة والمحتوى', ico: 'plan', perm: 'plan.review' },
+  { key: 'teachers', label: 'المعلمون', ico: 'teacher', perm: 'teacher.verify' },
+  { key: 'activities', label: 'الأنشطة', ico: 'activity', perm: 'activity.manage' },
+  {
+    key: 'surveys',
+    label: 'الاستبانات',
+    ico: 'survey',
+    anyPerm: ['survey.manage.teacher', 'survey.manage.experience', 'survey.analyze'],
+  },
+  { key: 'impact', label: 'قياس الأثر', ico: 'impact', perm: 'impact.manage' },
+  {
+    key: 'complaints',
+    label: 'الشكاوى',
+    ico: 'complaint',
+    anyPerm: ['complaint.manage', 'complaint.verify'],
+  },
+  { key: 'discipline', label: 'المتابعة والانضباط', ico: 'discipline', perm: 'discipline.manage' },
+  { key: 'continuity', label: 'الاستمرارية', ico: 'continuity', perm: 'continuity.manage' },
+  { key: 'actions', label: 'الإجراءات', ico: 'actions', perm: 'action.manage' },
+  { key: 'team', label: 'الفريق والأدوار', ico: 'team', perm: null },
+  { key: 'audit', label: 'سجل التدقيق', ico: 'audit', perm: 'audit.read' },
+  { key: 'close', label: 'إقفال البرنامج', ico: 'closeProgram', perm: 'program.close' },
 ];
+
+/** التبويبات التي يملك المستخدم صلاحية رؤيتها. */
+export function visibleTabs(perms) {
+  return PROGRAM_TABS.filter((t) => {
+    if (t.anyPerm) return t.anyPerm.some((p) => can(perms, p));
+    return t.perm === null || can(perms, t.perm);
+  });
+}
 
 /**
  * يحمّل البرنامج ويتحقق من صلاحية الوصول.
@@ -50,8 +75,9 @@ export function ensureOpen(ctx, program) {
   return true;
 }
 
-/** ترويسة صفحة البرنامج مع شريط التبويبات. */
-export function programHead(program, active, extra = '') {
+/** ترويسة صفحة البرنامج مع شريط التبويبات المفلتر بالصلاحية. */
+export function programHead(program, active, perms = null, extra = '') {
+  const tabs = perms ? visibleTabs(perms) : PROGRAM_TABS;
   return `<div class="crumbs"><a href="/programs">البرامج</a> ← ${esc(program.name)}</div>
   <div class="pagehead">
     <div>
@@ -62,7 +88,9 @@ export function programHead(program, active, extra = '') {
     </div>
     <div>${extra}</div>
   </div>
-  ${subnav(program.id, active, PROGRAM_TABS)}`;
+  <nav class="subnav">${tabs.map((t) =>
+    `<a class="${active === t.key ? 'on' : ''}" href="/programs/${program.id}${t.key ? `/${t.key}` : ''}">
+      ${icon(t.ico, { size: 15 })}<span>${esc(t.label)}</span></a>`).join('')}</nav>`;
 }
 
 export const yesNo = (v) => (v ? 'نعم' : 'لا');

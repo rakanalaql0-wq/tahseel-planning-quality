@@ -88,7 +88,7 @@ export default function register(router) {
     const loaded = loadProgram(ctx); if (!loaded) return;
     const { program, perms } = loaded;
     const editable = can(perms, 'impact.manage') && program.status !== 'closed';
-    return ctx.render('قياس الأثر', programHead(program, 'impact') + overview(program, editable),
+    return ctx.render('قياس الأثر', programHead(program, 'impact', perms) + overview(program, editable),
       { active: '/programs', wide: true });
   });
 

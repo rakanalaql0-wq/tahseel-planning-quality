@@ -87,7 +87,7 @@ test('كل شاشات البرنامج تُفتح لمدير النظام', asyn
     const body = await res.text();
     assert.match(body, /dir="rtl"/, 'الواجهة يجب أن تكون RTL');
   }
-  for (const path of ['/', '/tasks', '/reports', '/notifications', '/admin/metric', '/admin/users', '/admin/audit']) {
+  for (const path of ['/app', '/tasks', '/reports', '/notifications', '/admin/metric', '/admin/users', '/admin/audit']) {
     const res = await fetchAs(cookie, path);
     assert.equal(res.status, 200, `فشل فتح ${path}`);
   }
@@ -485,4 +485,92 @@ test('كوكي الجلسة يحمل Secure عند الدخول عبر https ف�
   });
   const plainCookie = plain.headers.getSetCookie().find((c) => c.startsWith('tpq_session='));
   assert.doesNotMatch(plainCookie, /Secure/, 'لا تُوسم Secure على http وإلا تعذّر الدخول محليًا');
+});
+
+// ------------------------------ الموقع العام ------------------------------
+
+test('الصفحة الرئيسية تفتح دون تسجيل دخول وتعرض البرامج والمؤشرات', async () => {
+  const res = await fetch(`${BASE}/`);
+  assert.equal(res.status, 200);
+  const body = await res.text();
+  assert.match(body, /dir="rtl"/);
+  assert.match(body, /جمعية تحصيل المعرفة/);
+  assert.match(body, /برنامج إتقان التلاوة/, 'تظهر البرامج المعلنة');
+  assert.match(body, /دخول المنسوبين/, 'يوجد مدخل لتسجيل الدخول');
+  assert.doesNotMatch(body, /لوحتي/, 'لا تظهر عناصر المنصة الداخلية للزائر');
+});
+
+test('صفحات الموقع العام كلها متاحة للزائر', async () => {
+  for (const path of ['/', '/about', '/programs-public', '/programs-public/1', '/activities-public', '/reports-public']) {
+    const res = await fetch(`${BASE}${path}`);
+    assert.equal(res.status, 200, `فشل فتح ${path} للزائر`);
+  }
+});
+
+test('الموقع العام لا يكشف بيانات شخصية ولا سجلات داخلية', async () => {
+  const student = 'أحمد الزهراني'; // طالب في البرنامج التجريبي
+  for (const path of ['/', '/programs-public', '/programs-public/1', '/reports-public']) {
+    const body = await (await fetch(`${BASE}${path}`)).text();
+    assert.doesNotMatch(body, new RegExp(student), `${path} يكشف اسم طالب`);
+    assert.doesNotMatch(body, /سجل التدقيق|الشكاوى والمقترحات|الحالات المتعثرة/, `${path} يكشف سجلات داخلية`);
+  }
+});
+
+test('اللوحة الداخلية انتقلت إلى /app والجذر عام', async () => {
+  const anon = await fetch(`${BASE}/app`, { redirect: 'manual' });
+  assert.equal(anon.status, 302, '/app يتطلب تسجيل دخول');
+  assert.match(anon.headers.get('location'), /^\/login/);
+
+  const cookie = await login('officer');
+  const res = await fetchAs(cookie, '/app');
+  assert.equal(res.status, 200);
+  assert.match(await res.text(), /واجباتي اليوم/);
+});
+
+// ------------------------------ القوائم والصلاحيات ------------------------
+
+test('لا تظهر للمستخدم تبويبات لا يملك صلاحيتها', async () => {
+  const supervisor = await login('supervisor');
+  const body = await (await fetchAs(supervisor, '/programs/1')).text();
+  const tabs = [...body.matchAll(/href="\/programs\/1(?:\/([a-z]+))?"[^>]*>\s*<svg[\s\S]*?<span>([^<]+)<\/span>/g)]
+    .map((m) => m[2].trim());
+
+  assert.ok(tabs.includes('نظرة عامة'), 'المشرف يرى النظرة العامة');
+  assert.ok(tabs.includes('المقياس والدرجة'), 'المشرف يرى المقياس');
+  for (const hidden of ['الطلاب', 'الحضور', 'الخطة والمحتوى', 'المعلمون', 'الشكاوى',
+    'الاستمرارية', 'سجل التدقيق', 'إقفال البرنامج', 'قياس الأثر']) {
+    assert.ok(!tabs.includes(hidden), `المشرف لا يجب أن يرى تبويب «${hidden}»`);
+  }
+  assert.ok(tabs.length <= 6, `عدد تبويبات المشرف يجب أن يكون مختصرًا، وُجد ${tabs.length}`);
+});
+
+test('مسؤول الجودة العلمية يرى تبويباته دون تبويبات غيره', async () => {
+  const academic = await login('academic');
+  const body = await (await fetchAs(academic, '/programs/1')).text();
+  const tabs = [...body.matchAll(/href="\/programs\/1(?:\/[a-z]+)?"[^>]*>\s*<svg[\s\S]*?<span>([^<]+)<\/span>/g)]
+    .map((m) => m[1].trim());
+  for (const shown of ['الخطة والمحتوى', 'المعلمون', 'الأنشطة', 'قياس الأثر']) {
+    assert.ok(tabs.includes(shown), `يجب أن يرى «${shown}»`);
+  }
+  for (const hidden of ['الحضور', 'الاستمرارية', 'إقفال البرنامج', 'سجل التدقيق']) {
+    assert.ok(!tabs.includes(hidden), `لا يجب أن يرى «${hidden}»`);
+  }
+});
+
+test('الهوية البصرية: الشعار وألوان الجمعية مطبّقة', async () => {
+  const logo = await fetch(`${BASE}/logo.svg`);
+  assert.equal(logo.status, 200);
+  const svg = await logo.text();
+  assert.match(svg, /#36AC8D/i, 'الأخضر الأساسي في الشعار');
+  assert.match(svg, /#CC9C63/i, 'الذهبي في الشعار');
+
+  const css = await (await fetch(`${BASE}/app.css`)).text();
+  for (const color of ['#1F4E4B', '#36AC8D', '#CC9C63', '#E3CAAB']) {
+    assert.ok(css.includes(color), `اللون ${color} غير معرّف في الهوية`);
+  }
+  assert.match(css, /@media \(max-width: 780px\)/, 'توجد قواعد تجاوب للجوال');
+  assert.match(css, /table\.stackable/, 'الجداول تتحول إلى بطاقات على الجوال');
+
+  const home = await (await fetch(`${BASE}/`)).text();
+  assert.match(home, /logo\.svg/, 'الشعار معروض في الصفحة الرئيسية');
 });

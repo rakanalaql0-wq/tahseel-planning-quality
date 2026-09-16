@@ -62,7 +62,7 @@ export default function register(router) {
   // قائمة استبانات البرنامج
   router.get('/programs/:id/surveys', (ctx) => {
     const loaded = loadProgram(ctx); if (!loaded) return;
-    const { program } = loaded;
+    const { program, perms } = loaded;
     const rows = all(
       `SELECT s.*, i.name AS indicator_name
          FROM surveys s
@@ -78,7 +78,7 @@ export default function register(router) {
     );
     const threshold = minResponseRate();
 
-    ctx.render('الاستبانات', programHead(program, 'surveys') + `
+    ctx.render('الاستبانات', programHead(program, 'surveys', perms) + `
       ${section('الاستبانات', table(['الاستبانة', 'نقطة القياس', 'المؤشر', 'الحالة', 'الاستجابات', 'كفاية العينة', 'النتيجة', ''],
         rows.map((s) => {
           const r = surveyResults(s.id);

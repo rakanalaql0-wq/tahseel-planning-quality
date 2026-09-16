@@ -21,6 +21,7 @@ import registerImpact from './routes/impact.js';
 import registerEvidence from './routes/evidence.js';
 import registerReports from './routes/reports.js';
 import registerAdmin from './routes/admin.js';
+import registerPublic from './routes/public.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -38,12 +39,15 @@ const MIME = {
 
 const router = new Router();
 for (const register of [
-  registerAuth, registerDashboard, registerPrograms, registerSurveys, registerImpact,
-  registerEvidence, registerReports, registerAdmin,
+  registerPublic, registerAuth, registerDashboard, registerPrograms, registerSurveys,
+  registerImpact, registerEvidence, registerReports, registerAdmin,
 ]) register(router);
 
 /** المسارات المتاحة دون تسجيل دخول. */
-const PUBLIC_PATHS = [/^\/login$/, /^\/r\/[^/]+$/, /^\/health$/];
+const PUBLIC_PATHS = [
+  /^\/$/, /^\/about$/, /^\/programs-public(\/\d+)?$/, /^\/activities-public$/, /^\/reports-public$/,
+  /^\/login$/, /^\/r\/[^/]+$/, /^\/health$/,
+];
 
 async function serveStatic(pathname, res) {
   const rel = normalize(pathname).replace(/^(\.\.[/\\])+/, '').replace(/^\//, '');
@@ -67,7 +71,7 @@ function errorPage(res, status, message, user) {
   const body = `<div class="panel"><div class="panel-body">
     <h1>${status === 404 ? 'الصفحة غير موجودة' : status === 403 ? 'لا تملك صلاحية' : 'حدث خطأ'}</h1>
     <p class="muted">${esc(message)}</p>
-    <p><a class="btn sec" href="/">العودة إلى لوحتي</a></p>
+    <p><a class="btn sec" href="${user ? '/app' : '/'}">${user ? 'العودة إلى لوحتي' : 'العودة إلى الرئيسية'}</a></p>
   </div></div>`;
   html(res, page({ title: `خطأ ${status}`, user, body }), status);
 }

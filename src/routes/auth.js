@@ -7,6 +7,7 @@ import {
 import { audit } from '../lib/audit.js';
 import { parseCookies } from '../lib/http.js';
 import { get } from '../db/index.js';
+import { logoMark } from '../views/icons.js';
 
 const DEMO_ACCOUNTS = [
   ['admin', 'مدير النظام'],
@@ -22,6 +23,9 @@ function loginPage({ error = '', next = '/', username = '' } = {}) {
   return bare({
     title: 'تسجيل الدخول',
     body: `<div class="login-card">
+      <span class="login-logo" style="display:block;text-align:center">
+        <img src="/logo.svg" width="66" height="66" alt="شعار جمعية تحصيل المعرفة">
+      </span>
       <h1>منصة التخطيط والجودة العلمية</h1>
       <p class="sub">جمعية تحصيل المعرفة — مقياس تشغيلي من 300 درجة</p>
       ${error ? `<div class="flash err">${esc(error)}</div>` : ''}
@@ -33,6 +37,9 @@ function loginPage({ error = '', next = '/', username = '' } = {}) {
           <input type="password" name="password" required autocomplete="current-password"></label>
         <button class="btn" style="width:100%">دخول</button>
       </form>
+      <p style="text-align:center;margin-top:.9rem">
+        <a href="/" style="font-size:.83rem">← العودة إلى الموقع العام</a>
+      </p>
       ${showDemo ? `<div class="demo-list">
         <strong>حسابات العرض التجريبي:</strong>
         <ul class="duties">${DEMO_ACCOUNTS.map(([u, r]) => `<li><code>${u}</code> — ${esc(r)}</li>`).join('')}</ul>
@@ -44,14 +51,14 @@ function loginPage({ error = '', next = '/', username = '' } = {}) {
 
 export default function register(router) {
   router.get('/login', (ctx) => {
-    if (ctx.user) { ctx.redirect('/'); return; }
-    html(ctx.res, loginPage({ next: ctx.query.next || '/' }));
+    if (ctx.user) { ctx.redirect('/app'); return; }
+    html(ctx.res, loginPage({ next: ctx.query.next || '/app' }));
   });
 
   router.post('/login', (ctx) => {
-    const { username = '', password = '', next = '/' } = ctx.body;
+    const { username = '', password = '', next = '/app' } = ctx.body;
     const user = findUserByUsername(username);
-    const safeNext = String(next).startsWith('/') ? String(next) : '/';
+    const safeNext = String(next).startsWith('/') ? String(next) : '/app';
     if (!user || !user.is_active || !verifyPassword(password, user.password_hash, user.password_salt)) {
       audit({ user: null, action: 'login.failed', entityType: 'user', entityId: user?.id ?? null, ip: ctx.ip, after: { username } });
       html(ctx.res, loginPage({ error: 'اسم المستخدم أو كلمة المرور غير صحيحة.', next: safeNext, username }), 401);

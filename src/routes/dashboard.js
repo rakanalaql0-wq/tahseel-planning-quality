@@ -154,7 +154,7 @@ function checklistForm(task, indicator, items, verification, existing) {
 }
 
 export default function register(router) {
-  router.get('/', (ctx) => ctx.render('لوحتي', dashboardBody(ctx), { active: '/' }));
+  router.get('/app', (ctx) => ctx.render('لوحتي', dashboardBody(ctx), { active: '/app' }));
 
   router.get('/tasks', (ctx) => {
     const t = tasksForUser(ctx.user.id);

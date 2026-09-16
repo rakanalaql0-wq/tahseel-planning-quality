@@ -38,7 +38,7 @@ export default function register(router) {
       ['present', 'حاضر'], ['late', 'متأخر'], ['excused', 'بعذر'], ['absent', 'غائب'],
     ];
 
-    ctx.render('الحضور', programHead(program, 'attendance') + `
+    ctx.render('الحضور', programHead(program, 'attendance', perms) + `
       ${section('تسجيل الحضور', current ? `
         <form method="get" class="row-form">
           ${select('session', sessions.map((s) => ({ value: s.id, label: `اللقاء ${s.seq} — ${fmtDate(s.session_date)}` })), current.id, { attrs: 'onchange="this.form.submit()"' })}
@@ -108,7 +108,7 @@ export default function register(router) {
     const editable = can(perms, 'teacher.verify') && program.status !== 'closed';
     const statusMap = { pending: badge('بانتظار التحقق', 'warn'), approved: badge('مناسب ومعتمد', 'good'), rejected: badge('غير مناسب', 'bad') };
 
-    ctx.render('المعلمون', programHead(program, 'teachers') + `
+    ctx.render('المعلمون', programHead(program, 'teachers', perms) + `
       ${section('المعلمون والتحقق من مناسبتهم', teachers.length ? teachers.map((t) => {
         const evid = all("SELECT * FROM evidences WHERE entity_type = 'teacher' AND entity_id = ? ORDER BY id DESC", t.id);
         return `<div class="check-item">
@@ -173,7 +173,7 @@ export default function register(router) {
          FROM activities a WHERE a.program_id = ? ORDER BY a.activity_date DESC, a.id DESC`, program.id,
     );
     const editable = can(perms, 'activity.manage') && program.status !== 'closed';
-    ctx.render('الأنشطة', programHead(program, 'activities') + `
+    ctx.render('الأنشطة', programHead(program, 'activities', perms) + `
       ${section('سجل الأنشطة', table(['النشاط', 'النوع', 'رئيس؟', 'التاريخ', 'الحالة', 'قياس الفاعلية'],
         rows.map((a) => [
           esc(a.name), esc(a.kind || '—'), a.is_main ? badge('رئيس', 'info') : '—',
@@ -239,7 +239,7 @@ export default function register(router) {
     const canVerify = can(perms, 'complaint.verify');
     const now = today();
 
-    ctx.render('الشكاوى والمقترحات', programHead(program, 'complaints') + `
+    ctx.render('الشكاوى والمقترحات', programHead(program, 'complaints', perms) + `
       ${section('السجل', table(['الرمز', 'العنوان', 'النوع', 'المسؤول', 'المدة (SLA)', 'الحالة', 'الشواهد', 'التحقق النهائي', ''],
         rows.map((c) => {
           const late = c.status !== 'closed' && c.due_date && c.due_date < now;
@@ -383,7 +383,7 @@ export default function register(router) {
       { value: 'behavior', label: 'سلوك' },
       { value: 'academic', label: 'تعثر دراسي' },
     ];
-    ctx.render('المتابعة والانضباط', programHead(program, 'discipline') + `
+    ctx.render('المتابعة والانضباط', programHead(program, 'discipline', perms) + `
       ${section('الحالات المتعثرة والإجراءات', table(['الطالب', 'النوع', 'الوصف', 'الإجراء', 'جلسة المتابعة', 'قناة التواصل', 'الحالة', ''],
         rows.map((d) => [
           esc(d.student_name || '—'),
@@ -468,7 +468,7 @@ export default function register(router) {
     const stayed = Number(stats?.total || 0) - Number(stats?.withdrawn || 0);
     const editable = can(perms, 'continuity.manage') && program.status !== 'closed';
 
-    ctx.render('الاستمرارية', programHead(program, 'continuity') + `
+    ctx.render('الاستمرارية', programHead(program, 'continuity', perms) + `
       <div class="stats">
         ${statCard({ label: 'أعداد البداية', value: startCount })}
         ${statCard({ label: 'المستمرون', value: stayed, tone: 'good' })}
@@ -546,7 +546,7 @@ export default function register(router) {
         <button class="btn small sec">نقل</button></form>` : ''}
     </div>`;
 
-    ctx.render('الإجراءات التصحيحية والتحسينية', programHead(program, 'actions') + `
+    ctx.render('الإجراءات التصحيحية والتحسينية', programHead(program, 'actions', perms) + `
       ${section('لوحة الإجراءات', `<div class="kanban">${cols.map(([key, label]) => `
         <div class="col"><h3>${esc(label)} (${rows.filter((a) => a.status === key).length})</h3>
         ${rows.filter((a) => a.status === key).map(card).join('') || '<p class="empty">—</p>'}</div>`).join('')}</div>`)}

@@ -1,8 +1,10 @@
 import { esc, fmtDate, fmtNum } from '../lib/util.js';
+import { icon } from './icons.js';
 
 /** بطاقة إحصائية. */
-export function statCard({ label, value, sub = '', tone = '' }) {
+export function statCard({ label, value, sub = '', tone = '', ico = '' }) {
   return `<div class="stat ${tone}">
+    ${ico ? `<span class="stat-ico">${icon(ico, { size: 19 })}</span>` : ''}
     <div class="stat-value">${esc(value)}</div>
     <div class="stat-label">${esc(label)}</div>
     ${sub ? `<div class="stat-sub">${esc(sub)}</div>` : ''}
@@ -102,13 +104,6 @@ export function input(name, { type = 'text', value = '', required = false, place
 
 export function textarea(name, { value = '', rows = 3, required = false, placeholder = '' } = {}) {
   return `<textarea name="${esc(name)}" rows="${rows}" placeholder="${esc(placeholder)}"${required ? ' required' : ''}>${esc(value)}</textarea>`;
-}
-
-/** شريط تنقّل فرعي داخل البرنامج. */
-export function subnav(programId, active, items) {
-  return `<nav class="subnav">${items.map(([key, label]) =>
-    `<a class="${active === key ? 'on' : ''}" href="/programs/${programId}${key ? `/${key}` : ''}">${esc(label)}</a>`,
-  ).join('')}</nav>`;
 }
 
 export function evidenceList(items) {

@@ -28,6 +28,7 @@ const COLUMN_MIGRATIONS = [
   ['surveys', 'is_open_link', 'INTEGER NOT NULL DEFAULT 0'],
   ['discipline_cases', 'followup_at', 'TEXT'],     // تاريخ جلسة المتابعة
   ['discipline_cases', 'followup_note', 'TEXT'],
+  ['programs', 'is_public', 'INTEGER NOT NULL DEFAULT 1'], // الإعلان في الموقع العام
 ];
 
 function migrate(handle) {

@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS programs (
   planned_sessions INTEGER NOT NULL DEFAULT 0,   -- عدد اللقاءات
   planned_students INTEGER NOT NULL DEFAULT 0,   -- عدد الطلاب عند البداية
   status           TEXT NOT NULL DEFAULT 'draft', -- draft | active | closing | closed
+  is_public        INTEGER NOT NULL DEFAULT 1,    -- يظهر في الموقع العام
   closed_at        TEXT,
   final_score      REAL,
   final_coverage   REAL,
