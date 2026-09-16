@@ -443,3 +443,46 @@ test('مسؤول البرنامج لا يملك صلاحية وسم «غير م�
   });
   assert.equal(res.status, 403);
 });
+
+test('خلف وسيط HTTPS: الروابط المولّدة تستخدم https لا http', async () => {
+  const cookie = await login('quality');
+  // محاكاة Codespaces / Nginx: بروتوكول مُمرَّر في الترويسة
+  const res = await fetch(`${BASE}/programs/1/surveys`, {
+    headers: { Cookie: cookie, 'X-Forwarded-Proto': 'https' },
+    redirect: 'manual',
+  });
+  assert.equal(res.status, 200);
+
+  const surveys = await res.text();
+  const surveyId = /href="\/surveys\/(\d+)"/.exec(surveys)?.[1];
+  assert.ok(surveyId, 'توجد استبانة مفتوحة من اختبار سابق');
+
+  const page = await (await fetch(`${BASE}/surveys/${surveyId}`, {
+    headers: { Cookie: cookie, 'X-Forwarded-Proto': 'https' },
+    redirect: 'manual',
+  })).text();
+
+  const links = [...page.matchAll(/(https?):\/\/[^/"\s]+\/r\//g)].map((m) => m[1]);
+  assert.ok(links.length > 0, 'الصفحة تعرض روابط توزيع');
+  assert.ok(links.every((p) => p === 'https'), 'كل الروابط يجب أن تكون https خلف الوسيط');
+});
+
+test('كوكي الجلسة يحمل Secure عند الدخول عبر https فقط', async () => {
+  const secure = await fetch(`${BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Forwarded-Proto': 'https' },
+    body: new URLSearchParams({ username: 'manager', password: 'Tahseel@2026' }),
+    redirect: 'manual',
+  });
+  const secureCookie = secure.headers.getSetCookie().find((c) => c.startsWith('tpq_session='));
+  assert.match(secureCookie, /Secure/);
+
+  const plain = await fetch(`${BASE}/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ username: 'manager', password: 'Tahseel@2026' }),
+    redirect: 'manual',
+  });
+  const plainCookie = plain.headers.getSetCookie().find((c) => c.startsWith('tpq_session='));
+  assert.doesNotMatch(plainCookie, /Secure/, 'لا تُوسم Secure على http وإلا تعذّر الدخول محليًا');
+});

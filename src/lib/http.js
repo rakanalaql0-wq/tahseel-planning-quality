@@ -90,9 +90,10 @@ export function parseCookies(header = '') {
   return out;
 }
 
-export function setCookie(res, name, value, { maxAge, httpOnly = true, path = '/' } = {}) {
+export function setCookie(res, name, value, { maxAge, httpOnly = true, path = '/', secure = false } = {}) {
   const parts = [`${name}=${encodeURIComponent(value)}`, `Path=${path}`, 'SameSite=Lax'];
   if (httpOnly) parts.push('HttpOnly');
+  if (secure) parts.push('Secure');
   if (maxAge !== undefined) parts.push(`Max-Age=${maxAge}`);
   const prev = res.getHeader('Set-Cookie');
   const list = prev ? (Array.isArray(prev) ? prev : [prev]) : [];

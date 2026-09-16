@@ -73,8 +73,13 @@ function errorPage(res, status, message, user) {
 }
 
 async function handle(req, res) {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+  // خلف وسيط HTTPS (Codespaces أو Nginx) يأتي البروتوكول الحقيقي في x-forwarded-proto،
+  // ولولا احترامه لتولّدت روابط الاستبانات بـ http على موقع https.
+  const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+    || (req.socket.encrypted ? 'https' : 'http');
+  const url = new URL(req.url, `${proto}://${req.headers.host || 'localhost'}`);
   const pathname = decodeURIComponent(url.pathname);
+  const isSecure = proto === 'https';
 
   if (req.method === 'GET' && await serveStatic(pathname, res)) return;
   if (pathname === '/health') { send(res, 200, 'ok', { 'Content-Type': 'text/plain' }); return; }
@@ -119,7 +124,7 @@ async function handle(req, res) {
     : 0;
 
   const ctx = {
-    req, res, url, user, body, files, flash, notifCount,
+    req, res, url, user, body, files, flash, notifCount, isSecure,
     params: match.params,
     query: Object.fromEntries(url.searchParams),
     ip: req.socket.remoteAddress,

@@ -1,0 +1,29 @@
+{
+  "name": "منصة التخطيط والجودة العلمية",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": {
+      "label": "منصة التخطيط والجودة العلمية",
+      "onAutoForward": "openBrowser"
+    }
+  },
+
+  // تهيئة قاعدة البيانات وبنية المقياس والبرنامج التجريبي عند أول إنشاء
+  "postCreateCommand": "node --version && npm run seed",
+
+  // تشغيل الخادم تلقائيًا عند فتح البيئة ليظهر الرابط مباشرة
+  "postAttachCommand": {
+    "server": "npm start"
+  },
+
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "files.encoding": "utf8",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

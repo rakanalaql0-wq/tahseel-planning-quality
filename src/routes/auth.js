@@ -58,7 +58,7 @@ export default function register(router) {
       return;
     }
     const token = createSession(user.id, ctx.req.headers['user-agent']);
-    setCookie(ctx.res, 'tpq_session', token, { maxAge: 7 * 24 * 3600 });
+    setCookie(ctx.res, 'tpq_session', token, { maxAge: 7 * 24 * 3600, secure: ctx.isSecure });
     audit({ user, action: 'login', entityType: 'user', entityId: user.id, ip: ctx.ip });
     ctx.redirect(safeNext, `أهلًا بك، ${user.full_name}.`);
   });
