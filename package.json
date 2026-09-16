@@ -1,0 +1,16 @@
+{
+  "name": "tahseel-planning-quality",
+  "version": "0.1.0",
+  "private": true,
+  "description": "منصة التخطيط والجودة العلمية - جمعية تحصيل المعرفة",
+  "type": "module",
+  "engines": { "node": ">=22.5.0" },
+  "scripts": {
+    "start": "node --no-warnings src/server.js",
+    "dev": "node --no-warnings --watch src/server.js",
+    "seed": "node --no-warnings src/db/seed.js",
+    "reset": "node --no-warnings src/db/seed.js --reset",
+    "test": "node --no-warnings --test test/*.test.js"
+  },
+  "dependencies": {}
+}
