@@ -17,9 +17,11 @@ export function progress(pct, { label = '', tone = 'auto' } = {}) {
   if (v === null) return '<span class="muted">لم يُقس بعد</span>';
   let cls = tone;
   if (tone === 'auto') cls = v >= 85 ? 'good' : v >= 60 ? 'warn' : 'bad';
-  return `<div class="bar" title="${fmtNum(v)}%">
-    <div class="bar-fill ${cls}" style="width:${v.toFixed(1)}%"></div>
-    <span class="bar-text">${label ? `${esc(label)} ` : ''}${fmtNum(v)}%</span>
+  // النسبة تُكتب خارج الشريط: لا تُقصّ في الأعمدة الضيقة ولا على الجوال
+  return `<div class="meter" title="${fmtNum(v)}%">
+    <span class="meter-val">${fmtNum(v)}%</span>
+    <span class="meter-track"><span class="meter-fill ${cls}" style="width:${v.toFixed(1)}%"></span></span>
+    ${label ? `<span class="meter-lbl">${esc(label)}</span>` : ''}
   </div>`;
 }
 

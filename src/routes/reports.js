@@ -123,7 +123,7 @@ function programReport(program) {
           <br><small class="muted">${esc(a.axis.name)} · ${esc(n.sample_label)} · ${roleName(n.indicator.owner_role)}</small></td>
           <td class="num">${fmtNum(n.earned)} / ${fmtNum(n.weight)}</td>
           <td>${progress(n.score_pct)}</td>
-          <td>${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small></td></tr>`);
+          <td>${progress(n.coverage_pct)}<small class="muted"><span class="num">${n.completed}</span> من <span class="num">${n.required}</span></small></td></tr>`);
       }
     }
   }

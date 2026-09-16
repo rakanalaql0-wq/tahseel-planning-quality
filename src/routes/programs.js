@@ -207,7 +207,7 @@ function metricView(ctx, program, perms) {
             : `<span class="num">${fmtNum(n.earned)} / ${fmtNum(n.weight)}</span>`,
           n.exempt ? '<span class="muted">—</span>' : progress(n.score_pct),
           n.exempt ? '<span class="muted">—</span>'
-            : `${progress(n.coverage_pct)}<small class="muted num">${n.completed} من ${n.required}</small>
+            : `${progress(n.coverage_pct)}<small class="muted"><span class="num">${n.completed}</span> من <span class="num">${n.required}</span></small>
                ${n.insufficient?.length ? `<br>${badge(`${n.insufficient.length} عينة غير كافية`, 'bad')}` : ''}`,
           n.exempt ? ''
             : n.indicator.tool === 'checklist'

@@ -575,6 +575,26 @@ test('الهوية البصرية: الشعار وألوان الجمعية مط
   assert.match(home, /logo\.svg/, 'الشعار معروض في الصفحة الرئيسية');
 });
 
+test('نظام التصميم: رموز موحّدة ووضع ليلي ونسبة مقروءة', async () => {
+  const css = await (await fetch(`${BASE}/app.css`)).text();
+
+  // كل رمز مستخدم لا بد أن يكون معرَّفًا — وإلا انهار اللون بصمت
+  const defined = new Set([...css.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gmi)].map((m) => m[1]));
+  const used = new Set([...css.matchAll(/var\((--[a-z0-9-]+)/gi)].map((m) => m[1]));
+  const missing = [...used].filter((v) => !defined.has(v));
+  assert.deepEqual(missing, [], 'رموز مستخدمة بلا تعريف');
+
+  assert.match(css, /@media \(prefers-color-scheme: dark\)/, 'وضع ليلي');
+  assert.match(css, /@media \(max-width: 1024px\)/, 'القائمة تُطوى على اللوحي');
+  assert.match(css, /\.meter-track/, 'مقياس النسبة بالتصميم الجديد');
+
+  // النسبة تُكتب خارج الشريط لا داخله حتى لا تُقصّ في الأعمدة الضيقة
+  const cookie = await login('manager');
+  const metric = await (await fetchAs(cookie, '/programs/1/metric')).text();
+  assert.match(metric, /<span class="meter-val">/, 'النسبة عنصر مستقل خارج الشريط');
+  assert.doesNotMatch(metric, /class="muted num">\d+ من/, 'النص المختلط لا يُجبر على الاتجاه اللاتيني');
+});
+
 // ------------------------------ الذكاء والتنظيم ---------------------------
 
 test('اللوحة تبدأ بـ«ابدأ بهذه» وتعرض تشخيصًا لا قوائم فقط', async () => {
