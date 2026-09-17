@@ -9,6 +9,7 @@ const APP = 'منصة التخطيط والجودة العلمية';
 const org = () => setting('org_name');
 
 const NAV = [
+  ['/system', 'النظام', 'shield'],
   ['/app', 'لوحتي', 'home'],
   ['/programs', 'البرامج', 'programs'],
   ['/tasks', 'واجباتي', 'tasks'],
@@ -96,6 +97,7 @@ export function bare({ title, body }) {
 export function publicPage({ title, body, active = '', user = null }) {
   const links = [
     ['/', 'الرئيسية'],
+    ['/system', 'النظام'],
     ['/about', 'عن الجمعية'],
     ['/programs-public', 'البرامج'],
     ['/activities-public', 'الأنشطة'],
@@ -142,6 +144,7 @@ ${body}
     </div>
     <div>
       <h4>منسوبو الجمعية</h4>
+      <a href="/system">دليل النظام الكامل</a>
       <a href="/login">تسجيل الدخول للمنصة</a>
       <a href="/reports-public">مؤشرات الجودة المعلنة</a>
     </div>

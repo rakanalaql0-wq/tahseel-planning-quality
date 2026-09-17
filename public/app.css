@@ -871,7 +871,175 @@ ul.prio-list { list-style: none; padding: 0; margin: 0; counter-reset: prio; }
 .next-up { border: 1px solid var(--green-300); box-shadow: var(--sh-brand); }
 .next-up .panel-head { background: linear-gradient(90deg, var(--tint-green), var(--surface)); }
 
-/* ============================ 19) شاشات الإدارة ======================== */
+/* ============================ 19) صفحة النظام ========================== */
+
+.doc-hero {
+  position: relative; color: #fff; overflow: hidden;
+  background:
+    var(--pat-light),
+    radial-gradient(800px 420px at 85% -25%, rgba(54, 172, 141, .5), transparent 62%),
+    linear-gradient(140deg, var(--deep-900), var(--deep) 62%, #276b64);
+  border-bottom: 3px solid var(--gold);
+}
+.doc-hero-in { max-width: var(--maxw); margin: 0 auto; padding: 2.8rem var(--sp-4) 2.4rem; }
+.doc-hero h1 {
+  font-size: var(--fs-display); color: #fff; font-weight: 900;
+  letter-spacing: -1.4px; margin: .3rem 0 .5rem;
+}
+.doc-hero p { font-size: 1.05rem; opacity: .92; max-width: 62ch; line-height: 1.9; }
+.doc-hero-note {
+  font-size: var(--fs-xs) !important; opacity: .78 !important; margin-top: 1rem !important;
+  display: flex; gap: .4rem; align-items: flex-start;
+  border-inline-start: 3px solid var(--gold); padding-inline-start: .7rem;
+}
+
+/* فهرس جانبي لاصق + متن */
+.doc-layout {
+  display: grid; gap: var(--sp-5); align-items: start;
+  grid-template-columns: 236px minmax(0, 1fr);
+  margin-top: var(--sp-5);
+}
+.doc-toc {
+  position: sticky; top: calc(var(--header-h) + 12px);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  padding: .9rem 1rem; box-shadow: var(--sh-1); max-height: calc(100vh - var(--header-h) - 30px);
+  overflow-y: auto;
+}
+.doc-toc strong {
+  display: block; font-size: var(--fs-xs); color: var(--deep);
+  padding-bottom: .5rem; margin-bottom: .4rem;
+  background: var(--rule-gold) bottom center/120px 12px no-repeat;
+}
+.doc-toc ol { margin: 0; padding-inline-start: 1.1rem; counter-reset: none; }
+.doc-toc li { margin-bottom: .1rem; }
+.doc-toc a {
+  display: block; font-size: var(--fs-xs); color: var(--ink-2);
+  padding: .2rem .3rem; border-radius: 6px; font-weight: 600;
+}
+.doc-toc a:hover { color: var(--deep); background: var(--tint-green); }
+
+.doc-body { min-width: 0; }
+.doc-sec {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--r);
+  padding: 1.2rem 1.3rem; margin-bottom: var(--sp-4); box-shadow: var(--sh-1);
+  scroll-margin-top: calc(var(--header-h) + 14px);
+}
+.doc-sec > h2 {
+  display: flex; align-items: center; gap: .55rem;
+  font-size: 1.28rem; color: var(--deep); font-weight: 900;
+  padding-bottom: .6rem; margin-bottom: .9rem;
+  border-bottom: 2px solid var(--line);
+}
+.doc-sec > h2 svg.ico { color: var(--gold); }
+.doc-sec p { line-height: 1.95; }
+.doc-sec h3 { font-size: 1.02rem; color: var(--deep); margin-top: 1.1rem; }
+.doc-sec h4 { font-size: .93rem; color: var(--deep); }
+
+.doc-lead {
+  font-size: 1.05rem; font-weight: 700; color: var(--deep);
+  border-inline-start: 4px solid var(--gold);
+  background: var(--tint-sand); padding: .7rem .9rem; border-radius: var(--r);
+  margin-bottom: .9rem !important;
+}
+.doc-formula {
+  direction: rtl; text-align: center; font-weight: 800; color: var(--deep);
+  background: var(--tint-green); border: 1px dashed var(--green-300);
+  border-radius: var(--r); padding: .7rem .9rem; margin: .8rem 0 !important;
+}
+
+.doc-cards { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); margin: .9rem 0; }
+.doc-def {
+  border: 1px solid var(--line); border-radius: var(--r); padding: .8rem .9rem;
+  background: var(--surface-2); border-inline-start: 4px solid var(--green);
+}
+.doc-def strong { display: block; color: var(--deep); margin-bottom: .2rem; font-size: .95rem; }
+.doc-def p { margin: 0; font-size: var(--fs-xs); color: var(--ink-2); line-height: 1.8; }
+
+.doc-stats { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin: 1rem 0; }
+.doc-stat {
+  text-align: center; padding: 1rem .8rem; border-radius: var(--r);
+  border: 1px solid var(--line); box-shadow: var(--sh-1);
+  background: var(--pat-dark), linear-gradient(160deg, var(--tint-green), var(--surface) 60%);
+}
+.doc-stat .v {
+  display: block; font-size: 2.1rem; font-weight: 900; color: var(--deep);
+  letter-spacing: -1px; direction: ltr; unicode-bidi: isolate;
+}
+.doc-stat .l { display: block; font-weight: 700; font-size: var(--fs-sm); }
+.doc-stat .p { display: block; font-size: var(--fs-micro); color: var(--ink-2); }
+
+.doc-section-block { margin-bottom: 1.4rem; }
+.doc-section-block > h3 {
+  display: flex; align-items: center; gap: .6rem;
+  color: #fff; background: linear-gradient(90deg, var(--deep), var(--green));
+  padding: .5rem .8rem; border-radius: var(--r); font-size: 1.02rem; margin: 0 0 .7rem;
+}
+.doc-num {
+  flex: none; background: rgba(255, 255, 255, .2); border-radius: 8px;
+  padding: 0 .5rem; font-weight: 900; direction: ltr; unicode-bidi: isolate;
+}
+.doc-axis { margin: 0 0 .9rem; padding-inline-start: .6rem; border-inline-start: 3px solid var(--sand); }
+.doc-axis h4 { display: flex; align-items: center; gap: .5rem; margin-bottom: .35rem; }
+/* أعمدة ثابتة العرض حتى تتحاذى جداول المحاور الثلاثة عشر بدل أن يتزحزح كل جدول */
+.doc-axis table { table-layout: fixed; }
+.doc-axis th:nth-child(1) { width: 38%; }
+.doc-axis th:nth-child(2) { width: 13%; }
+.doc-axis th:nth-child(3) { width: 18%; }
+.doc-axis th:nth-child(4) { width: 23%; }
+.doc-axis th:nth-child(5) { width: 8%; }
+.doc-axis td { word-break: break-word; }
+
+.doc-tool {
+  border: 1px solid var(--line); border-radius: var(--r); padding: .9rem 1rem;
+  background: var(--surface-2); margin-bottom: .8rem;
+}
+.doc-tool h3 { display: flex; align-items: center; gap: .5rem; margin-top: 0; flex-wrap: wrap; }
+.doc-tool h3 svg.ico { color: var(--green); }
+.doc-states { display: flex; gap: .5rem; flex-wrap: wrap; margin: .6rem 0; }
+.doc-states .badge { font-size: var(--fs-xs); padding: .2rem .7rem; }
+
+.doc-roles {
+  display: grid; gap: .8rem; align-items: start;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.doc-role {
+  border: 1px solid var(--line); border-radius: var(--r); padding: .85rem .9rem;
+  background: var(--surface-2); border-top: 3px solid var(--green);
+}
+.doc-role h3 { display: flex; align-items: center; gap: .45rem; margin: 0 0 .3rem; font-size: .98rem; }
+.doc-role h3 svg.ico { color: var(--green); }
+.doc-role .duties { font-size: var(--fs-xs); }
+.doc-role-count {
+  font-size: var(--fs-micro); color: var(--ink-2); font-weight: 700;
+  border-top: 1px dashed var(--line); padding-top: .4rem; margin-top: .5rem !important;
+}
+
+.doc-steps { padding-inline-start: 1.2rem; line-height: 1.95; }
+.doc-steps li { margin-bottom: .5rem; }
+.doc-steps strong { color: var(--deep); }
+
+.doc-end {
+  text-align: center; padding: 1.6rem 1rem; margin-bottom: var(--sp-5);
+  background: var(--rule-gold) top center/148px 16px no-repeat;
+}
+.doc-end p { color: var(--ink-2); margin-bottom: .8rem; padding-top: 1rem; }
+
+@media (max-width: 900px) {
+  .doc-layout { grid-template-columns: 1fr; }
+  /* الفهرس على الجوال صندوق قصير يُمرَّر، لا شاشة كاملة قبل أول فصل */
+  .doc-toc { position: static; max-height: 232px; }
+  .doc-toc ol { columns: 2; column-gap: 1rem; }
+  .doc-hero h1 { font-size: 1.7rem; }
+  .doc-hero p { font-size: .95rem; }
+  .doc-sec { padding: .95rem 1rem; }
+  .doc-sec > h2 { font-size: 1.1rem; }
+}
+
+@media (max-width: 480px) {
+  .doc-toc ol { columns: 1; }
+}
+
+/* ============================ 20) شاشات الإدارة ======================== */
 
 /* أبواب مركز الإدارة */
 .adcards { display: grid; gap: .7rem; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }

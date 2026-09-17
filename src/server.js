@@ -22,6 +22,7 @@ import registerEvidence from './routes/evidence.js';
 import registerReports from './routes/reports.js';
 import registerAdmin from './routes/admin.js';
 import registerPublic from './routes/public.js';
+import registerSystem from './routes/system.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const HOST = process.env.HOST || '0.0.0.0';
@@ -39,13 +40,14 @@ const MIME = {
 
 const router = new Router();
 for (const register of [
-  registerPublic, registerAuth, registerDashboard, registerPrograms, registerSurveys,
+  registerPublic, registerSystem, registerAuth, registerDashboard, registerPrograms, registerSurveys,
   registerImpact, registerEvidence, registerReports, registerAdmin,
 ]) register(router);
 
 /** المسارات المتاحة دون تسجيل دخول. */
 const PUBLIC_PATHS = [
-  /^\/$/, /^\/about$/, /^\/programs-public(\/\d+)?$/, /^\/activities-public$/, /^\/reports-public$/,
+  /^\/$/, /^\/about$/, /^\/system$/,
+  /^\/programs-public(\/\d+)?$/, /^\/activities-public$/, /^\/reports-public$/,
   /^\/login$/, /^\/r\/[^/]+$/, /^\/health$/,
 ];
 

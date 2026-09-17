@@ -829,3 +829,60 @@ test('الإعدادات المحفوظة يقرأها النظام فعلًا',
     org_name: 'جمعية تحصيل المعرفة', min_response_rate: '70', default_sla_days: '5',
   });
 });
+
+// ------------------------------ صفحة النظام ------------------------------
+
+test('صفحة النظام تُفتح دون تسجيل دخول وتشرح الفصول كلها', async () => {
+  const res = await fetch(`${BASE}/system`, { redirect: 'manual' });
+  assert.equal(res.status, 200, 'الصفحة عامة بلا تسجيل دخول');
+  const body = await res.text();
+
+  for (const id of ['idea', 'scale', 'tree', 'tools', 'numbers', 'roles', 'lifecycle',
+    'tasks', 'surveys', 'impact', 'diagnostics', 'actions', 'benchmark', 'exempt',
+    'evidence', 'rules', 'glossary']) {
+    assert.match(body, new RegExp(`id="${id}"`), `الفصل «${id}» غائب`);
+  }
+  assert.match(body, /محتويات الدليل/, 'فهرس الدليل');
+  assert.match(body, /BR-15/, 'قواعد الأعمال كاملة');
+  assert.match(body, /مسرد المصطلحات/);
+});
+
+test('صفحة النظام مولّدة من النظام لا مكتوبة عنه', async () => {
+  const cookie = await login('admin');
+
+  // تعديل وزن مؤشر من شاشة الإدارة يجب أن يظهر في الشرح فورًا
+  const before = await (await fetch(`${BASE}/system`)).text();
+  assert.match(before, /ملاءمة القاعة للتعلم/, 'اسم المؤشر مقروء من قاعدة البيانات');
+
+  await postAs(cookie, '/admin/metric/indicator', {
+    op: 'update',
+    id: '1',
+    code: 'I-1.1.1',
+    name: 'مؤشر أعيدت تسميته من شاشة الإدارة',
+    weight: '20',
+    tool: 'checklist',
+    owner_role: 'supervisor',
+    periodicity: 'fixed_count',
+    min_count: '2',
+    sample_pct: '',
+    sort: '111',
+    is_active: '1',
+  });
+
+  const after = await (await fetch(`${BASE}/system`)).text();
+  assert.match(after, /مؤشر أعيدت تسميته من شاشة الإدارة/, 'الشرح تبع التعديل');
+  assert.doesNotMatch(after, /ملاءمة القاعة للتعلم/, 'الاسم القديم لم يبقَ محفورًا في الصفحة');
+
+  // والمنصب الجديد يظهر في فصل المناصب
+  await postAs(cookie, '/admin/roles', { key: 'doc_role', name: 'منصب يظهر في الدليل', perm: 'report.read' });
+  const withRole = await (await fetch(`${BASE}/system`)).text();
+  assert.match(withRole, /منصب يظهر في الدليل/, 'المنصب الجديد ظهر في الشرح');
+});
+
+test('صفحة النظام لا تعرض أي بيانات شخصية', async () => {
+  const body = await (await fetch(`${BASE}/system`)).text();
+  // أسماء الطلاب والمنسوبين من قاعدة العرض التجريبي
+  for (const name of ['خالد المنصور', 'عبدالله الحربي', 'سعد العتيبي']) {
+    assert.ok(!body.includes(name), `اسم شخصي ظاهر في صفحة عامة: ${name}`);
+  }
+});
