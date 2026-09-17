@@ -2,7 +2,7 @@ import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, fmtNum, int, today, addDays } from '../lib/util.js';
 import {
   statCard, table, section, statusBadge, badge, progress, select, field, input, textarea,
-  evidenceList, evidenceForm, insightList, compareBar,
+  evidenceList, evidenceForm, insightList, compareBar, pageTitle,
 } from '../views/ui.js';
 import { icon } from '../views/icons.js';
 import { programDiagnostics, healthLabel } from '../lib/insights.js';
@@ -50,7 +50,7 @@ function programsList(ctx) {
       <p style="margin-top:.7rem"><button class="btn">إنشاء البرنامج</button></p>
     </form>`) : '';
 
-  return `<div class="pagehead"><div><h1>البرامج</h1>
+  return `<div class="pagehead"><div>${pageTitle('البرامج')}
     <p class="meta">${programs.length} برنامجًا مسندًا إليك</p></div></div>
     ${section('قائمة البرامج', table(
       ['البرنامج', 'الفترة', 'الحالة', 'الدرجة من 300', 'نتيجة الجودة', 'اكتمال القياس'],

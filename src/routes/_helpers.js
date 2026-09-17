@@ -2,7 +2,7 @@ import { get } from '../db/index.js';
 import { canAccessProgram, programPerms, rolesInProgram } from '../lib/auth.js';
 import { can } from '../lib/roles.js';
 import { esc, fmtDate } from '../lib/util.js';
-import { statusBadge } from '../views/ui.js';
+import { statusBadge, pageTitle } from '../views/ui.js';
 import { icon } from '../views/icons.js';
 
 /**
@@ -89,7 +89,7 @@ export function programHead(program, active, perms = null, extra = '') {
   return `<div class="crumbs"><a href="/programs">البرامج</a> ← ${esc(program.name)}</div>
   <div class="pagehead">
     <div>
-      <h1>${esc(program.name)} ${statusBadge(program.status)}</h1>
+      ${pageTitle(program.name, { ico: 'programs', extra: statusBadge(program.status) })}
       <p class="meta">${esc(program.code || '')} · ${esc(program.term || '')} ·
         ${fmtDate(program.start_date)} — ${fmtDate(program.end_date)} ·
         ${esc(program.venue_name || 'بلا قاعة')} · ${program.planned_sessions} لقاءات · ${program.planned_students} طالبًا</p>

@@ -1,6 +1,6 @@
 import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, fmtNum, int, num } from '../lib/util.js';
-import { table, section, badge, statCard, select, field, input } from '../views/ui.js';
+import { table, section, badge, statCard, select, field, input, pageTitle } from '../views/ui.js';
 import { ROLES, ROLE_KEYS, GLOBAL_ROLES, roleName } from '../lib/roles.js';
 import { hashPassword } from '../lib/auth.js';
 import { audit, auditRecent } from '../lib/audit.js';
@@ -64,7 +64,7 @@ export default function register(router) {
     }
 
     ctx.render('إدارة المقياس', `
-      <div class="pagehead"><div><h1>إدارة المقياس</h1>
+      <div class="pagehead"><div>${pageTitle('إدارة المقياس')}
         <p class="meta">الأوزان والدوريات وقواعد العينة قابلة للتعديل دون تغيير الكود</p></div></div>
       <div class="stats">
         ${statCard({ label: 'إجمالي أوزان المؤشرات', value: fmtNum(totalWeight), tone: Math.abs(totalWeight - 300) < 0.01 ? 'good' : 'bad', sub: 'المطلوب 300 (BR-01)' })}
@@ -135,7 +135,7 @@ export default function register(router) {
          FROM users u ORDER BY u.full_name`,
     );
     ctx.render('المستخدمون', `
-      <div class="pagehead"><div><h1>المستخدمون والحسابات</h1></div></div>
+      <div class="pagehead"><div>${pageTitle('المستخدمون والحسابات')}</div></div>
       ${section('الحسابات', table(['الاسم', 'الحساب', 'الصلاحية العامة', 'إسنادات', 'مهام معلّقة', 'آخر دخول', 'الحالة', ''],
         users.map((u) => [
           esc(u.full_name), `<code>${esc(u.username)}</code>`, esc(GLOBAL_ROLES[u.global_role] || u.global_role),
@@ -195,7 +195,7 @@ export default function register(router) {
     if (!isManager(ctx.user)) return ctx.deny();
     const rows = auditRecent(300);
     ctx.render('سجل التدقيق', `
-      <div class="pagehead"><div><h1>سجل التدقيق</h1>
+      <div class="pagehead"><div>${pageTitle('سجل التدقيق')}
         <p class="meta">من فعل ماذا ومتى — قبل/بعد التعديل، وسجل الدخول والاعتمادات</p></div></div>
       ${section('آخر 300 عملية', table(['التاريخ', 'المستخدم', 'العملية', 'الكيان', 'البرنامج', 'قبل', 'بعد'],
         rows.map((a) => [

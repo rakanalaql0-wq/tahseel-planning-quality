@@ -1,6 +1,8 @@
 import { all, get } from '../db/index.js';
 import { esc, fmtDate, fmtNum, toCsv } from '../lib/util.js';
-import { table, section, statusBadge, badge, progress, statCard, insightCard, insightList, compareBar } from '../views/ui.js';
+import {
+  table, section, statusBadge, badge, progress, statCard, insightCard, insightList, compareBar, pageTitle,
+} from '../views/ui.js';
 import { send } from '../lib/http.js';
 import { roleName } from '../lib/roles.js';
 import { programsForUser, canAccessProgram } from '../lib/auth.js';
@@ -27,7 +29,7 @@ function reportsCenter(ctx) {
   const atRisk = portfolio.filter((x) => x.health === 'critical');
 
   return `
-  <div class="pagehead"><div><h1>مركز التقارير</h1>
+  <div class="pagehead"><div>${pageTitle('مركز التقارير')}
     <p class="meta">المقارنة والمعايرة والاتجاه والتصدير — النتيجة منفصلة عن اكتمال القياس (BR-11)</p></div></div>
 
   <div class="stats">

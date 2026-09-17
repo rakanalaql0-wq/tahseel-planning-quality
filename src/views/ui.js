@@ -1,5 +1,5 @@
 import { esc, fmtDate, fmtNum } from '../lib/util.js';
-import { icon } from './icons.js';
+import { icon, iconForTitle } from './icons.js';
 
 /** بطاقة إحصائية. */
 export function statCard({ label, value, sub = '', tone = '', ico = '' }) {
@@ -60,18 +60,38 @@ export function statusBadge(status) {
 
 /** جدول عام. */
 export function table(headers, rows, { empty = 'لا توجد بيانات', cls = '' } = {}) {
-  if (!rows.length) return `<p class="empty">${esc(empty)}</p>`;
+  if (!rows.length) return emptyState(empty);
   return `<div class="table-wrap"><table class="${cls}">
     <thead><tr>${headers.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead>
     <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${c}</td>`).join('')}</tr>`).join('')}</tbody>
   </table></div>`;
 }
 
-export function section(title, body, { actions = '', id = '' } = {}) {
+export function section(title, body, { actions = '', id = '', ico = '' } = {}) {
+  const name = ico || iconForTitle(title);
   return `<section class="panel"${id ? ` id="${esc(id)}"` : ''}>
-    <header class="panel-head"><h2>${esc(title)}</h2>${actions ? `<div class="panel-actions">${actions}</div>` : ''}</header>
+    <header class="panel-head">
+      <h2><span class="ph-ico">${icon(name, { size: 17 })}</span><span>${esc(title)}</span></h2>
+      ${actions ? `<div class="panel-actions">${actions}</div>` : ''}
+    </header>
     <div class="panel-body">${body}</div>
   </section>`;
+}
+
+/**
+ * عنوان صفحة بأيقونة.
+ * الأيقونة تُستنتج من العنوان، فلا تُمرَّر يدويًا في كل صفحة.
+ */
+export function pageTitle(title, { ico = '', extra = '' } = {}) {
+  const name = ico || iconForTitle(title);
+  return `<h1><span class="h1-ico">${icon(name, { size: 21 })}</span>
+    <span>${esc(title)}</span>${extra}</h1>`;
+}
+
+/** حالة «لا بيانات» — زخرفة وأيقونة بدل سطر رمادي وحيد. */
+export function emptyState(text, ico = 'layers') {
+  return `<div class="empty"><span class="empty-ico">${icon(ico, { size: 26 })}</span>
+    <p>${esc(text)}</p></div>`;
 }
 
 export function dueBadge(dueDate, todayStr) {
@@ -109,7 +129,7 @@ export function textarea(name, { value = '', rows = 3, required = false, placeho
 }
 
 export function evidenceList(items) {
-  if (!items.length) return '<p class="empty">لا توجد شواهد مرفقة.</p>';
+  if (!items.length) return emptyState('لا توجد شواهد مرفقة.', 'file');
   return `<ul class="evidence">${items.map((e) => {
     const href = e.kind === 'file' ? `/evidence/${e.id}/download` : e.url;
     const name = e.title || e.file_name || e.url;

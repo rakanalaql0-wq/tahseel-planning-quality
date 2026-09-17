@@ -2,7 +2,7 @@ import { all, get, run } from '../db/index.js';
 import { esc, fmtDate, fmtNum, today, addDays, int } from '../lib/util.js';
 import {
   statCard, table, section, statusBadge, dueBadge, badge, progress, evidenceList, evidenceForm,
-  textarea, insightCard, insightList, healthBadge, priorityRow,
+  textarea, insightCard, insightList, healthBadge, priorityRow, pageTitle,
 } from '../views/ui.js';
 import { icon } from '../views/icons.js';
 import { programDiagnostics, prioritizedTasks, portfolioHealth } from '../lib/insights.js';
@@ -69,7 +69,7 @@ function dashboardBody(ctx) {
 
   return `
   <div class="pagehead">
-    <div><h1>لوحتي</h1>
+    <div>${pageTitle('لوحتي', { ico: 'home' })}
       <p class="meta">${esc(user.full_name)} — ${myRoles.map(roleName).join('، ') || 'بلا دور مسند'}</p></div>
   </div>
 
@@ -204,7 +204,7 @@ export default function register(router) {
     );
     const head = ['المهمة', 'البرنامج', 'الاستحقاق', 'الأداة'];
     ctx.render('واجباتي', `
-      <h1>واجباتي</h1>
+      ${pageTitle('واجباتي')}
       ${section(`المتأخر (${t.overdue.length})`, table(head, rows(t.overdue), { empty: 'لا توجد مهام متأخرة.' }))}
       ${section(`اليوم (${t.dueToday.length})`, table(head, rows(t.dueToday), { empty: 'لا توجد مهام مستحقة اليوم.' }))}
       ${section(`قريبًا (${t.soon.length})`, table(head, rows(t.soon), { empty: 'لا توجد مهام قريبة.' }))}
@@ -415,7 +415,7 @@ export default function register(router) {
     run('UPDATE notifications SET is_read = 1 WHERE user_id = ?', ctx.user.id);
     const tone = { overdue: 'bad', due_soon: 'warn', sample_gap: 'warn', not_met: 'bad', info: 'info' };
     ctx.render('التنبيهات', `
-      <h1>التنبيهات</h1>
+      ${pageTitle('التنبيهات')}
       ${section('كل التنبيهات', table(['النوع', 'العنوان', 'التفاصيل', 'التاريخ'],
         rows.map((n) => [
           badge({ overdue: 'متأخر', due_soon: 'قريب الاستحقاق', sample_gap: 'نقص عينة', not_met: 'غير متحقق', info: 'معلومة' }[n.type] || n.type, tone[n.type] || ''),
