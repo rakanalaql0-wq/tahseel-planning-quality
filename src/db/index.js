@@ -32,6 +32,7 @@ const COLUMN_MIGRATIONS = [
   ['corrective_actions', 'group_key', 'TEXT'],              // تجميع المشكلة المتكررة
   ['corrective_actions', 'occurrence_count', 'INTEGER NOT NULL DEFAULT 1'],
   ['corrective_actions', 'recurred', 'INTEGER NOT NULL DEFAULT 0'],
+  ['checklist_items', 'is_active', 'INTEGER NOT NULL DEFAULT 1'],   // تعطيل بند بدل حذفه
 ];
 
 function migrate(handle) {

@@ -8,9 +8,9 @@ import { can } from '../lib/roles.js';
 import { audit } from '../lib/audit.js';
 import { scheduleMainActivityTask, refreshNotifications } from '../lib/scheduler.js';
 import { loadProgram, ensureOpen, programHead } from './_helpers.js';
+import { settingNum } from '../lib/settings.js';
 import { prioritizedActions } from '../lib/actions.js';
 
-const SLA_DEFAULT = 5;
 
 export default function register(router) {
   // ------------------------------ الحضور ------------------------------
@@ -264,7 +264,7 @@ export default function register(router) {
             ${field('النوع', select('kind', [{ value: 'complaint', label: 'شكوى' }, { value: 'suggestion', label: 'مقترح' }], 'complaint'))}
             ${field('المصدر', input('source', { placeholder: 'طالب / ولي أمر / معلم' }))}
             ${field('المسؤول', select('assigned_to', team.map((t) => ({ value: t.id, label: t.full_name })), ctx.user.id, { placeholder: 'بدون' }))}
-            ${field('مدة المعالجة بالأيام', input('sla_days', { type: 'number', value: SLA_DEFAULT, attrs: 'min="1" max="60"' }))}
+            ${field('مدة المعالجة بالأيام', input('sla_days', { type: 'number', value: settingNum('default_sla_days'), attrs: 'min="1" max="60"' }))}
           </div>
           ${field('التفاصيل', textarea('body', { rows: 3 }))}
           <button class="btn">تسجيل</button>
@@ -277,7 +277,7 @@ export default function register(router) {
     if (!ensureOpen(ctx, program)) return;
     const title = String(ctx.body.title || '').trim();
     if (!title) return ctx.redirect(`/programs/${program.id}/complaints`, 'عنوان الشكوى مطلوب.', 'err');
-    const sla = Math.min(60, Math.max(1, int(ctx.body.sla_days, SLA_DEFAULT)));
+    const sla = Math.min(60, Math.max(1, int(ctx.body.sla_days, settingNum('default_sla_days'))));
     const nextNum = Number(get('SELECT COUNT(*) c FROM complaints WHERE program_id = ?', program.id).c) + 1;
     const res = run(
       `INSERT INTO complaints (program_id, ref_code, kind, source, title, body, sla_days, due_date, assigned_to)

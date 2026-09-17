@@ -6,7 +6,7 @@ import {
 } from '../views/ui.js';
 import { icon } from '../views/icons.js';
 import { programDiagnostics, prioritizedTasks, portfolioHealth } from '../lib/insights.js';
-import { ROLES, roleName } from '../lib/roles.js';
+import { roleName, roleDuties, roleByKey } from '../lib/roles.js';
 import { programsForUser, canAccessProgram } from '../lib/auth.js';
 import { tasksForUser, refreshNotifications } from '../lib/scheduler.js';
 import { computeProgram, missingMeasurements } from '../lib/scoring.js';
@@ -58,10 +58,10 @@ function dashboardBody(ctx) {
     badge(task.tool === 'checklist' ? 'قائمة تحقق' : task.tool === 'survey' ? 'استبانة' : 'سجل تشغيلي', 'muted'),
   ];
 
-  const duties = myRoles.filter((r) => ROLES[r]).map((r) => `
+  const duties = myRoles.filter((r) => roleByKey(r)).map((r) => `
     <div>
-      <h3>${esc(ROLES[r].name)}</h3>
-      <ul class="duties">${ROLES[r].duties.map((d) => `<li>${esc(d)}</li>`).join('')}</ul>
+      <h3>${esc(roleName(r))}</h3>
+      <ul class="duties">${roleDuties(r).map((d) => `<li>${esc(d)}</li>`).join('')}</ul>
     </div>`).join('');
 
   // نظرة الجمعية لمدير الجودة: البرامج المهدَّدة أولًا
@@ -253,7 +253,7 @@ export default function register(router) {
           task.id, task.program_id, task.indicator_id, task.session_id);
         verification = get('SELECT * FROM verifications WHERE task_id = ? ORDER BY id DESC LIMIT 1', task.id);
       }
-      const items = all('SELECT * FROM checklist_items WHERE indicator_id = ? ORDER BY sort, id', task.indicator_id);
+      const items = all('SELECT * FROM checklist_items WHERE indicator_id = ? AND is_active = 1 ORDER BY sort, id', task.indicator_id);
       const existing = all('SELECT * FROM verification_items WHERE verification_id = ?', verification.id);
       ctx.render(task.title, `${header}
         ${section('قائمة التحقق', checklistForm(task, task.indicator_id, items, verification, existing),
@@ -303,7 +303,7 @@ export default function register(router) {
     const verification = get("SELECT * FROM verifications WHERE task_id = ? AND status = 'draft' ORDER BY id DESC LIMIT 1", task.id);
     if (!verification) return ctx.notFound('لا توجد عملية تحقق مفتوحة لهذه المهمة.');
 
-    const items = all('SELECT * FROM checklist_items WHERE indicator_id = ? ORDER BY sort, id', task.indicator_id);
+    const items = all('SELECT * FROM checklist_items WHERE indicator_id = ? AND is_active = 1 ORDER BY sort, id', task.indicator_id);
     let weighted = 0;
     let totalWeight = 0;
     const saved = [];

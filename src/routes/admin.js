@@ -1,82 +1,100 @@
 import { all, get, run } from '../db/index.js';
-import { esc, fmtDate, fmtNum, int, num } from '../lib/util.js';
-import { table, section, badge, statCard, select, field, input, pageTitle } from '../views/ui.js';
-import { ROLES, ROLE_KEYS, GLOBAL_ROLES, roleName } from '../lib/roles.js';
+import { esc, fmtDate, fmtNum, int } from '../lib/util.js';
+import {
+  table, section, badge, statCard, select, field, input, textarea, pageTitle, emptyState,
+} from '../views/ui.js';
+import { icon } from '../views/icons.js';
+import { GLOBAL_ROLES, allRoles, roleName } from '../lib/roles.js';
 import { hashPassword } from '../lib/auth.js';
 import { audit, auditRecent } from '../lib/audit.js';
-import { samplePlanLabel } from '../lib/scoring.js';
-import { syncProgramTasks } from '../lib/scheduler.js';
+import { SETTINGS, setting, setSetting } from '../lib/settings.js';
+import registerMetricAdmin from './admin-metric.js';
+import registerRolesAdmin from './admin-roles.js';
 
 const isAdmin = (user) => user.global_role === 'admin';
 const isManager = (user) => user.global_role === 'admin' || user.global_role === 'quality_manager';
 
-const PERIODICITY = [
-  { value: 'before_start', label: 'قبل بدء البرنامج' },
-  { value: 'mid', label: 'منتصف البرنامج' },
-  { value: 'end', label: 'نهاية البرنامج' },
-  { value: 'mid_end', label: 'المنتصف والنهاية' },
-  { value: 'per_session_sample', label: 'عينة من اللقاءات' },
-  { value: 'fixed_count', label: 'عدد ثابت من المرات' },
-  { value: 'per_main_activity', label: 'بعد كل نشاط رئيس' },
-  { value: 'continuous', label: 'سجل تشغيلي مستمر' },
-];
+/** بطاقة باب في مركز الإدارة. */
+function adminCard({ href, ico, title, desc, stat, adminOnly = false }) {
+  return `<a class="adcard" href="${esc(href)}">
+    <span class="adcard-ico">${icon(ico, { size: 22 })}</span>
+    <span class="adcard-body">
+      <strong>${esc(title)}</strong>
+      <small>${esc(desc)}</small>
+    </span>
+    <span class="adcard-stat">${esc(String(stat ?? ''))}${adminOnly ? badge('مدير النظام', 'muted') : ''}</span>
+  </a>`;
+}
 
 export default function register(router) {
-  // ------------------------------ إدارة المقياس -------------------------
-  router.get('/admin/metric', (ctx) => {
+  registerMetricAdmin(router);
+  registerRolesAdmin(router);
+
+  // ------------------------------ مركز الإدارة ------------------------------
+  router.get('/admin', (ctx) => {
     if (!isManager(ctx.user)) return ctx.deny();
-    const sections = all('SELECT * FROM metric_sections ORDER BY sort, id');
-    const axes = all('SELECT * FROM metric_axes ORDER BY sort, id');
-    const indicators = all('SELECT * FROM indicators ORDER BY sort, id');
+    const c = (sql) => Number(get(sql)?.c || 0);
+    const indicators = all('SELECT weight, is_active FROM indicators');
     const totalWeight = indicators.filter((i) => i.is_active).reduce((s, i) => s + Number(i.weight), 0);
+    const roles = allRoles();
 
-    const rows = [];
-    for (const s of sections) {
-      const sAxes = axes.filter((a) => a.section_id === s.id);
-      const sWeight = sAxes.reduce((acc, a) => acc + indicators.filter((i) => i.axis_id === a.id && i.is_active)
-        .reduce((x, i) => x + Number(i.weight), 0), 0);
-      rows.push(`<tr class="section-row"><td colspan="6"><strong>${esc(s.name)}</strong>
-        — الوزن المعلن ${fmtNum(s.weight)} / المحسوب من المؤشرات ${fmtNum(sWeight)}
-        ${Math.abs(sWeight - Number(s.weight)) > 0.01 ? badge('تعارض في الأوزان', 'bad') : badge('متطابق', 'good')}</td></tr>`);
-      for (const a of sAxes) {
-        rows.push(`<tr class="axis-row"><td colspan="6">— ${esc(a.name)} (${fmtNum(a.weight)})</td></tr>`);
-        for (const i of indicators.filter((x) => x.axis_id === a.id)) {
-          rows.push(`<tr>
-            <td><code>${esc(i.code)}</code> ${esc(i.name)}
-              ${i.is_active ? '' : badge('معطّل', 'muted')}
-              ${i.description ? `<br><small class="muted">${esc(i.description)}</small>` : ''}</td>
-            <td>${{ checklist: 'قائمة تحقق', survey: 'استبانة', record: 'سجل تشغيلي' }[i.tool]}</td>
-            <td>${roleName(i.owner_role)}</td>
-            <td><small>${esc(samplePlanLabel(i))}</small></td>
-            <td class="num">${fmtNum(i.weight)}</td>
-            <td><form method="post" action="/admin/metric/indicator" class="row-form">
-              <input type="hidden" name="id" value="${i.id}">
-              ${input('weight', { type: 'number', value: i.weight, attrs: 'step="0.5" min="0" max="300" style="width:80px"' })}
-              ${select('owner_role', ROLE_KEYS.map((k) => ({ value: k, label: ROLES[k].name })), i.owner_role)}
-              ${select('periodicity', PERIODICITY, i.periodicity)}
-              ${input('sample_pct', { type: 'number', value: i.sample_pct ?? '', placeholder: '% عينة', attrs: 'min="0" max="100" style="width:80px"' })}
-              ${input('min_count', { type: 'number', value: i.min_count ?? '', placeholder: 'حد أدنى', attrs: 'min="0" max="200" style="width:80px"' })}
-              ${select('is_active', [{ value: '1', label: 'مفعّل' }, { value: '0', label: 'معطّل' }], String(i.is_active))}
-              <button class="btn small sec">حفظ</button>
-            </form></td></tr>`);
-        }
-      }
-    }
+    return ctx.render('مركز الإدارة', `
+      <div class="pagehead"><div>${pageTitle('مركز الإدارة', { ico: 'shield' })}
+        <p class="meta">كل ما يمكن تعريفه وتعديله في النظام من مكان واحد</p></div></div>
 
-    ctx.render('إدارة المقياس', `
-      <div class="pagehead"><div>${pageTitle('إدارة المقياس')}
-        <p class="meta">الأوزان والدوريات وقواعد العينة قابلة للتعديل دون تغيير الكود</p></div></div>
       <div class="stats">
-        ${statCard({ label: 'إجمالي أوزان المؤشرات', value: fmtNum(totalWeight), tone: Math.abs(totalWeight - 300) < 0.01 ? 'good' : 'bad', sub: 'المطلوب 300 (BR-01)' })}
-        ${statCard({ label: 'الأقسام', value: sections.length })}
-        ${statCard({ label: 'المحاور', value: axes.length })}
-        ${statCard({ label: 'المؤشرات المفعّلة', value: indicators.filter((i) => i.is_active).length })}
+        ${statCard({
+    label: 'إجمالي أوزان المقياس',
+    value: fmtNum(totalWeight),
+    ico: 'scale',
+    tone: Math.abs(totalWeight - 300) < 0.01 ? 'good' : 'bad',
+    sub: 'المطلوب 300 (BR-01)',
+  })}
+        ${statCard({ label: 'المناصب', value: roles.length, ico: 'team', sub: `${roles.filter((r) => r.is_active).length} مفعّل` })}
+        ${statCard({ label: 'الحسابات النشطة', value: c('SELECT COUNT(*) c FROM users WHERE is_active = 1'), ico: 'users' })}
+        ${statCard({ label: 'البرامج', value: c('SELECT COUNT(*) c FROM programs'), ico: 'programs' })}
       </div>
-      ${Math.abs(totalWeight - 300) > 0.01 ? '<div class="flash err">تحذير: مجموع أوزان المؤشرات لا يساوي 300 درجة. صحّح الأوزان قبل اعتماد القياس.</div>' : ''}
-      ${section('شجرة المقياس', `<div class="table-wrap"><table class="compact">
-        <thead><tr><th>المؤشر</th><th>الأداة</th><th>المسؤول</th><th>خطة العينة</th><th>الوزن</th><th>تعديل</th></tr></thead>
-        <tbody>${rows.join('')}</tbody></table></div>`,
-        { actions: '<form method="post" action="/admin/metric/resync" class="inline"><button class="btn sec small">إعادة توليد مهام كل البرامج النشطة</button></form>' })}
+
+      ${section('أبواب الإدارة', `<div class="adcards">
+        ${adminCard({
+    href: '/admin/metric',
+    ico: 'scale',
+    title: 'بنية المقياس والأوزان',
+    desc: 'الأقسام والمحاور والمؤشرات والأوزان والدوريات وبنود التحقق وأسئلة الاستبانات',
+    stat: `${c('SELECT COUNT(*) c FROM indicators WHERE is_active = 1')} مؤشرًا`,
+  })}
+        ${isAdmin(ctx.user) ? adminCard({
+    href: '/admin/roles',
+    ico: 'shield',
+    title: 'المناصب والصلاحيات',
+    desc: 'إضافة منصب جديد وتحديد صلاحياته ومسؤولياته ومن يملك قياس المؤشرات',
+    stat: `${roles.length} منصبًا`,
+    adminOnly: true,
+  }) : ''}
+        ${adminCard({
+    href: '/admin/users',
+    ico: 'users',
+    title: 'المستخدمون والحسابات',
+    desc: 'إنشاء الحسابات وإيقافها وتحديد الصلاحية العامة',
+    stat: `${c('SELECT COUNT(*) c FROM users')} حسابًا`,
+  })}
+        ${isAdmin(ctx.user) ? adminCard({
+    href: '/admin/settings',
+    ico: 'plan',
+    title: 'الإعدادات والبيانات المرجعية',
+    desc: 'اسم الجمعية، حدّ الاستجابة المعتمد، مدة معالجة الشكوى، والقاعات',
+    stat: `${c('SELECT COUNT(*) c FROM venues')} قاعة`,
+    adminOnly: true,
+  }) : ''}
+        ${adminCard({
+    href: '/admin/audit',
+    ico: 'audit',
+    title: 'سجل التدقيق',
+    desc: 'من فعل ماذا ومتى — قبل التعديل وبعده',
+    stat: `${c('SELECT COUNT(*) c FROM audit_logs')} عملية`,
+  })}
+      </div>`, { ico: 'layers' })}
+
       ${section('قواعد الأعمال المعتمدة', `<ul class="duties">
         <li>BR-01 — إجمالي المقياس 300 درجة: 75 + 135 + 90.</li>
         <li>BR-02 — قائمة التحقق: متحقق 100%، جزئي 50%، غير متحقق 0%.</li>
@@ -89,41 +107,131 @@ export default function register(router) {
         <li>BR-09 — فاعلية النشاط الرئيس: تقاس مباشرة بعد كل نشاط رئيس.</li>
         <li>BR-10 — الاستمرارية: 5 درجات نية الاستمرار + 15 الاستمرار الفعلي.</li>
         <li>BR-11 — «اكتمال القياس» يُعرض مستقلاً عن «نتيجة الجودة».</li>
-        <li>BR-12 — لا يحكم الطالب على السلامة العلمية للمحتوى (لا تُبنى أسئلة استبانة على مؤشرات المحتوى).</li>
-      </ul>`)}`, { active: '/admin/metric', wide: true });
+        <li>BR-12 — لا يحكم الطالب على السلامة العلمية للمحتوى.</li>
+        <li>BR-13 — الاستبانة دون الحد الأدنى للاستجابة تُوسم «عينة غير كافية».</li>
+        <li>BR-14 — رابط الاستبانة فردي لكل طالب ويُستخدم مرة واحدة.</li>
+        <li>BR-15 — المؤشر غير المنطبق يُستثنى من الوزن بسبب موثّق.</li>
+      </ul>`, { ico: 'list' })}`,
+    { active: '/admin', wide: true });
   });
 
-  router.post('/admin/metric/indicator', (ctx) => {
-    if (!isManager(ctx.user)) return ctx.deny();
-    const ind = get('SELECT * FROM indicators WHERE id = ?', ctx.body.id);
-    if (!ind) return ctx.notFound();
-    const weight = Math.max(0, Math.min(300, num(ctx.body.weight, ind.weight)));
-    const role = ROLE_KEYS.includes(ctx.body.owner_role) ? ctx.body.owner_role : ind.owner_role;
-    const periodicity = PERIODICITY.some((p) => p.value === ctx.body.periodicity) ? ctx.body.periodicity : ind.periodicity;
-    const samplePct = ctx.body.sample_pct === '' ? null : Math.max(0, Math.min(100, num(ctx.body.sample_pct, 0)));
-    const minCount = ctx.body.min_count === '' ? null : Math.max(0, Math.min(200, int(ctx.body.min_count, 0)));
-    const active = ctx.body.is_active === '0' ? 0 : 1;
-    run(`UPDATE indicators SET weight = ?, owner_role = ?, periodicity = ?, sample_pct = ?, min_count = ?, is_active = ? WHERE id = ?`,
-      weight, role, periodicity, samplePct, minCount, active, ind.id);
-    audit({
-      user: ctx.user, action: 'indicator.update', entityType: 'indicator', entityId: ind.id,
-      before: { weight: ind.weight, owner_role: ind.owner_role, periodicity: ind.periodicity, sample_pct: ind.sample_pct, min_count: ind.min_count, is_active: ind.is_active },
-      after: { weight, owner_role: role, periodicity, sample_pct: samplePct, min_count: minCount, is_active: active }, ip: ctx.ip,
-    });
-    ctx.redirect('/admin/metric', 'حُدّث المؤشر. أعد توليد المهام لتطبيق التغيير على البرامج النشطة.');
+  // ------------------------------ الإعدادات والبيانات المرجعية ------------
+  router.get('/admin/settings', (ctx) => {
+    if (!isAdmin(ctx.user)) return ctx.deny();
+    const venues = all(`SELECT v.*, (SELECT COUNT(*) FROM programs p WHERE p.venue_id = v.id) AS programs
+                          FROM venues v ORDER BY v.name`);
+
+    ctx.render('الإعدادات', `
+      <div class="crumbs"><a href="/admin">مركز الإدارة</a></div>
+      <div class="pagehead"><div>${pageTitle('الإعدادات والبيانات المرجعية', { ico: 'plan' })}
+        <p class="meta">قيم يقرأها النظام فعلًا في الاحتساب والعرض</p></div></div>
+
+      ${section('إعدادات النظام', `
+        <form method="post" action="/admin/settings">
+          <div class="form-grid">
+            ${SETTINGS.map((s) => field(s.label, input(s.key, {
+    type: s.type === 'number' ? 'number' : 'text',
+    value: setting(s.key) ?? '',
+    attrs: s.type === 'number' ? `min="${s.min}" max="${s.max}"` : '',
+  }), s.hint)).join('')}
+          </div>
+          <button class="btn">حفظ الإعدادات</button>
+        </form>`, { ico: 'plan' })}
+
+      ${section(`القاعات والمواقع (${venues.length})`, `
+        ${venues.length ? table(['القاعة', 'الموقع', 'السعة', 'برامج', 'ملاحظات', ''],
+    venues.map((v) => [
+      `<details class="editbox"><summary>${esc(v.name)}</summary><div class="editbox-body">
+            <form method="post" action="/admin/venues">
+              <input type="hidden" name="op" value="update"><input type="hidden" name="id" value="${v.id}">
+              <div class="form-grid">
+                ${field('الاسم', input('name', { value: v.name, required: true }))}
+                ${field('الموقع', input('location', { value: v.location || '' }))}
+                ${field('السعة', input('capacity', { type: 'number', value: v.capacity ?? '', attrs: 'min="0" max="5000"' }))}
+              </div>
+              ${field('ملاحظات', textarea('notes', { value: v.notes || '', rows: 2 }))}
+              <button class="btn small">حفظ القاعة</button>
+            </form></div></details>`,
+      esc(v.location || '—'),
+      v.capacity === null ? '—' : `<span class="num">${v.capacity}</span>`,
+      `<span class="num">${v.programs}</span>`,
+      `<small class="muted">${esc(v.notes || '—')}</small>`,
+      v.programs
+        ? '<span class="hint">مستخدمة في برامج</span>'
+        : `<form method="post" action="/admin/venues" class="inline" onsubmit="return confirm('حذف القاعة؟')">
+              <input type="hidden" name="op" value="delete"><input type="hidden" name="id" value="${v.id}">
+              <button class="btn danger small">حذف</button></form>`,
+    ])) : emptyState('لا قاعات مسجّلة.', 'building')}
+
+        <details class="editbox"><summary>${icon('plus', { size: 14 })} إضافة قاعة</summary><div class="editbox-body">
+          <form method="post" action="/admin/venues">
+            <input type="hidden" name="op" value="create">
+            <div class="form-grid">
+              ${field('الاسم', input('name', { required: true, placeholder: 'القاعة الرئيسة' }))}
+              ${field('الموقع', input('location', { placeholder: 'المقر الرئيس — الرياض' }))}
+              ${field('السعة', input('capacity', { type: 'number', attrs: 'min="0" max="5000"' }))}
+            </div>
+            ${field('ملاحظات', textarea('notes', { rows: 2 }))}
+            <button class="btn small">إضافة القاعة</button>
+          </form></div></details>`, { ico: 'building' })}`,
+    { active: '/admin', wide: true });
   });
 
-  router.post('/admin/metric/resync', (ctx) => {
-    if (!isManager(ctx.user)) return ctx.deny();
-    const programs = all("SELECT id FROM programs WHERE status <> 'closed'");
-    let created = 0;
-    let cancelled = 0;
-    for (const p of programs) {
-      const r = syncProgramTasks(p.id);
-      created += r.created; cancelled += r.cancelled;
+  router.post('/admin/settings', (ctx) => {
+    if (!isAdmin(ctx.user)) return ctx.deny();
+    const changed = [];
+    for (const s of SETTINGS) {
+      const raw = ctx.body[s.key];
+      if (raw === undefined) continue;
+      let value = String(raw).trim();
+      if (s.type === 'number') {
+        const n = Number(value);
+        if (!Number.isFinite(n)) continue;
+        value = String(Math.max(s.min, Math.min(s.max, n)));
+      }
+      if (!value) continue;
+      if (setSetting(s.key, value)) changed.push(`${s.key}=${value}`);
     }
-    audit({ user: ctx.user, action: 'tasks.resync_all', entityType: 'system', after: { created, cancelled }, ip: ctx.ip });
-    ctx.redirect('/admin/metric', `أُعيد التوليد على ${programs.length} برنامجًا: ${created} مهمة جديدة، ${cancelled} ملغاة.`);
+    audit({ user: ctx.user, action: 'settings.update', entityType: 'system', after: { changed }, ip: ctx.ip });
+    ctx.redirect('/admin/settings', 'حُفظت الإعدادات.');
+  });
+
+  // ------------------------------ القاعات ------------------------------
+  router.post('/admin/venues', (ctx) => {
+    if (!isAdmin(ctx.user)) return ctx.deny();
+    const back = '/admin/settings';
+    const op = ctx.body.op;
+
+    if (op === 'delete') {
+      const v = get('SELECT * FROM venues WHERE id = ?', ctx.body.id);
+      if (!v) return ctx.notFound();
+      if (get('SELECT 1 FROM programs WHERE venue_id = ?', v.id)) {
+        return ctx.redirect(back, 'القاعة مستخدمة في برامج — لا تُحذف.', 'err');
+      }
+      run('DELETE FROM venues WHERE id = ?', v.id);
+      audit({ user: ctx.user, action: 'venue.delete', entityType: 'venue', entityId: v.id, before: v, ip: ctx.ip });
+      return ctx.redirect(back, 'حُذفت القاعة.');
+    }
+
+    const name = String(ctx.body.name || '').trim();
+    if (!name) return ctx.redirect(back, 'اسم القاعة مطلوب.', 'err');
+    const location = String(ctx.body.location || '').trim() || null;
+    const capacity = ctx.body.capacity === '' ? null : Math.max(0, Math.min(5000, int(ctx.body.capacity, 0)));
+    const notes = String(ctx.body.notes || '').trim() || null;
+
+    if (op === 'update') {
+      const v = get('SELECT * FROM venues WHERE id = ?', ctx.body.id);
+      if (!v) return ctx.notFound();
+      run('UPDATE venues SET name = ?, location = ?, capacity = ?, notes = ? WHERE id = ?',
+        name, location, capacity, notes, v.id);
+      audit({ user: ctx.user, action: 'venue.update', entityType: 'venue', entityId: v.id, before: v, after: { name, location, capacity }, ip: ctx.ip });
+      return ctx.redirect(back, 'حُدّثت القاعة.');
+    }
+
+    const res = run('INSERT INTO venues (name, location, capacity, notes) VALUES (?, ?, ?, ?)',
+      name, location, capacity, notes);
+    audit({ user: ctx.user, action: 'venue.create', entityType: 'venue', entityId: Number(res.lastInsertRowid), after: { name, location }, ip: ctx.ip });
+    return ctx.redirect(back, 'أُضيفت القاعة.');
   });
 
   // ------------------------------ المستخدمون ---------------------------
@@ -134,17 +242,25 @@ export default function register(router) {
               (SELECT COUNT(*) FROM tasks t WHERE t.assigned_user_id = u.id AND t.status = 'pending') AS pending
          FROM users u ORDER BY u.full_name`,
     );
+    const rolesOf = (userId) => all(
+      'SELECT DISTINCT role FROM program_assignments WHERE user_id = ?', userId,
+    ).map((r) => roleName(r.role)).join('، ');
+
     ctx.render('المستخدمون', `
-      <div class="pagehead"><div>${pageTitle('المستخدمون والحسابات')}</div></div>
-      ${section('الحسابات', table(['الاسم', 'الحساب', 'الصلاحية العامة', 'إسنادات', 'مهام معلّقة', 'آخر دخول', 'الحالة', ''],
-        users.map((u) => [
-          esc(u.full_name), `<code>${esc(u.username)}</code>`, esc(GLOBAL_ROLES[u.global_role] || u.global_role),
-          `<span class="num">${u.assignments}</span>`, `<span class="num">${u.pending}</span>`,
-          fmtDate(u.last_login_at), u.is_active ? badge('نشط', 'good') : badge('موقوف', 'muted'),
-          isAdmin(ctx.user) ? `<form method="post" action="/admin/users/toggle" class="inline">
+      <div class="crumbs"><a href="/admin">مركز الإدارة</a></div>
+      <div class="pagehead"><div>${pageTitle('المستخدمون والحسابات')}
+        <p class="meta">الصلاحية العامة هنا، والمناصب التشغيلية تُسند داخل كل برنامج</p></div></div>
+      ${section('الحسابات', table(['الاسم', 'الحساب', 'الصلاحية العامة', 'مناصبه', 'إسنادات', 'مهام معلّقة', 'آخر دخول', 'الحالة', ''],
+    users.map((u) => [
+      esc(u.full_name), `<code>${esc(u.username)}</code>`,
+      esc(GLOBAL_ROLES[u.global_role] || u.global_role),
+      `<small class="muted">${esc(rolesOf(u.id) || '—')}</small>`,
+      `<span class="num">${u.assignments}</span>`, `<span class="num">${u.pending}</span>`,
+      fmtDate(u.last_login_at), u.is_active ? badge('نشط', 'good') : badge('موقوف', 'muted'),
+      isAdmin(ctx.user) ? `<form method="post" action="/admin/users/toggle" class="inline">
             <input type="hidden" name="id" value="${u.id}">
             <button class="btn small sec">${u.is_active ? 'إيقاف' : 'تفعيل'}</button></form>` : '',
-        ])))}
+    ])), { ico: 'users' })}
       ${isAdmin(ctx.user) ? section('إضافة مستخدم', `
         <form method="post" action="/admin/users">
           <div class="form-grid">
@@ -155,8 +271,8 @@ export default function register(router) {
           </div>
           <button class="btn">إضافة</button>
         </form>
-        <p class="hint">الأدوار التشغيلية تُسند داخل كل برنامج من شاشة «الفريق والأدوار».</p>`) : ''}`,
-    { active: '/admin/users' });
+        <p class="hint">المناصب التشغيلية تُسند داخل كل برنامج من شاشة «الفريق والأدوار».</p>`, { ico: 'plus' }) : ''}`,
+    { active: '/admin/users', wide: true });
   });
 
   router.post('/admin/users', (ctx) => {
@@ -195,15 +311,17 @@ export default function register(router) {
     if (!isManager(ctx.user)) return ctx.deny();
     const rows = auditRecent(300);
     ctx.render('سجل التدقيق', `
+      <div class="crumbs"><a href="/admin">مركز الإدارة</a></div>
       <div class="pagehead"><div>${pageTitle('سجل التدقيق')}
         <p class="meta">من فعل ماذا ومتى — قبل/بعد التعديل، وسجل الدخول والاعتمادات</p></div></div>
       ${section('آخر 300 عملية', table(['التاريخ', 'المستخدم', 'العملية', 'الكيان', 'البرنامج', 'قبل', 'بعد'],
-        rows.map((a) => [
-          `<small class="num">${esc(a.created_at)}</small>`, esc(a.user_name || '—'),
-          `<code>${esc(a.action)}</code>`, `${esc(a.entity_type || '—')}#${a.entity_id ?? '—'}`,
-          a.program_id ? `<a href="/programs/${a.program_id}">#${a.program_id}</a>` : '—',
-          `<small class="muted">${esc(String(a.before_json || '—').slice(0, 90))}</small>`,
-          `<small class="muted">${esc(String(a.after_json || '—').slice(0, 90))}</small>`,
-        ]), { empty: 'لا توجد عمليات.' }))}`, { active: '/admin/audit', wide: true });
+    rows.map((a) => [
+      `<small class="num">${esc(a.created_at)}</small>`, esc(a.user_name || '—'),
+      `<code>${esc(a.action)}</code>`, `${esc(a.entity_type || '—')}#${a.entity_id ?? '—'}`,
+      a.program_id ? `<a href="/programs/${a.program_id}">#${a.program_id}</a>` : '—',
+      `<small class="muted">${esc(String(a.before_json || '—').slice(0, 90))}</small>`,
+      `<small class="muted">${esc(String(a.after_json || '—').slice(0, 90))}</small>`,
+    ]), { empty: 'لا توجد عمليات.' }), { ico: 'audit' })}`,
+    { active: '/admin/audit', wide: true });
   });
 }

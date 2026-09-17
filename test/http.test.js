@@ -676,3 +676,156 @@ test('الإجراءات المتكررة تُدمج وتُوسم في لوحة 
   const occurrences = (board.match(/حاويات النفايات|معالجة: حاويات/g) || []).length;
   assert.ok(occurrences <= 2, `المشكلة الواحدة بطاقة واحدة، وُجدت ${occurrences} مرة`);
 });
+
+// ------------------------------ مركز الإدارة ------------------------------
+
+/**
+ * يرسل نموذجًا كمستخدم مسجّل ويعيد الرد دون اتباع التحويل.
+ * القيمة المصفوفة تُرسل حقلًا مكررًا كما تفعل مربعات الاختيار في المتصفح
+ * (لا قيمة واحدة مفصولة بفواصل كما يفعل URLSearchParams مع المصفوفة).
+ */
+const postAs = (cookie, path, fields) => {
+  const body = new URLSearchParams();
+  for (const [k, v] of Object.entries(fields)) {
+    for (const one of [].concat(v)) body.append(k, one);
+  }
+  return fetchAs(cookie, path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body,
+  });
+};
+
+test('مركز الإدارة: كل أبوابه تُفتح لمدير النظام', async () => {
+  const cookie = await login('admin');
+  for (const path of ['/admin', '/admin/metric', '/admin/roles', '/admin/settings', '/admin/users', '/admin/audit']) {
+    const res = await fetchAs(cookie, path);
+    assert.equal(res.status, 200, `تعذر فتح ${path}`);
+  }
+  const hub = await (await fetchAs(cookie, '/admin')).text();
+  assert.match(hub, /بنية المقياس والأوزان/, 'باب تحرير المقياس');
+  assert.match(hub, /المناصب والصلاحيات/, 'باب المناصب');
+});
+
+test('المناصب والصلاحيات محجوبة عن غير مدير النظام', async () => {
+  const cookie = await login('manager');   // مدير التخطيط والجودة لا مدير النظام
+  assert.equal((await fetchAs(cookie, '/admin/roles')).status, 403);
+  assert.equal((await fetchAs(cookie, '/admin/settings')).status, 403);
+  assert.equal((await fetchAs(cookie, '/admin/metric')).status, 200, 'تحرير المقياس متاح لمدير الجودة');
+});
+
+test('إضافة منصب جديد بصلاحياته يظهر فورًا في الإسناد وفي مالك المؤشر', async () => {
+  const cookie = await login('admin');
+  const res = await postAs(cookie, '/admin/roles', {
+    key: 'activity_coordinator',
+    name: 'منسّق الأنشطة',
+    description: 'يتابع الأنشطة الإثرائية',
+    perm: 'program.read',
+  });
+  assert.equal(res.status, 302);
+
+  const page = await (await fetchAs(cookie, '/admin/roles/activity_coordinator')).text();
+  assert.match(page, /منسّق الأنشطة/);
+
+  // يظهر في إسناد فريق البرنامج
+  const team = await (await fetchAs(cookie, '/programs/1/team')).text();
+  assert.match(team, /منسّق الأنشطة/, 'المنصب الجديد متاح للإسناد');
+
+  // ويظهر خيارًا لمالك المؤشر
+  const ind = await (await fetchAs(cookie, '/admin/metric/indicator/1')).text();
+  assert.match(ind, /value="activity_coordinator"/, 'المنصب الجديد متاح كمالك للمؤشر');
+});
+
+test('تعديل صلاحيات المنصب يستبدلها كاملة ويرفض مفتاحًا مخترعًا', async () => {
+  const cookie = await login('admin');
+  await postAs(cookie, '/admin/roles', { key: 'temp_role', name: 'منصب مؤقت', perm: 'program.read' });
+
+  const res = await postAs(cookie, '/admin/roles/temp_role', {
+    name: 'منصب مؤقت',
+    is_active: '1',
+    perm: ['report.read', 'perm.does.not.exist'],
+    duties: 'مسؤولية أولى\nمسؤولية ثانية',
+  });
+  assert.equal(res.status, 302);
+
+  const page = await (await fetchAs(cookie, '/admin/roles/temp_role')).text();
+  assert.match(page, /name="perm" value="report\.read" checked/, 'الصلاحية الجديدة محفوظة');
+  assert.doesNotMatch(page, /perm\.does\.not\.exist/, 'الصلاحية المخترعة مرفوضة');
+  assert.doesNotMatch(page, /name="perm" value="program\.read" checked/, 'الصلاحية القديمة أُزيلت');
+  assert.match(page, /مسؤولية ثانية/, 'المسؤوليات محفوظة');
+});
+
+test('لا يُحذف منصب من الوثيقة ولا منصب يملك مؤشرًا', async () => {
+  const cookie = await login('admin');
+  await postAs(cookie, '/admin/roles/supervisor/delete', {});
+  const roles = await (await fetchAs(cookie, '/admin/roles')).text();
+  assert.match(roles, /supervisor/, 'منصب الوثيقة لم يُحذف');
+});
+
+test('إضافة مؤشر وبند تحقق من الواجهة، ومنع الحذف بعد القياس', async () => {
+  const cookie = await login('admin');
+
+  const created = await postAs(cookie, '/admin/metric/indicator', {
+    op: 'create',
+    axis_id: '1',
+    code: 'I-TEST.1',
+    name: 'مؤشر اختباري',
+    weight: '4',
+    tool: 'checklist',
+    owner_role: 'supervisor',
+    periodicity: 'end',
+  });
+  assert.equal(created.status, 302);
+  const id = created.headers.get('location').match(/indicator\/(\d+)/)[1];
+
+  const item = await postAs(cookie, '/admin/metric/item', {
+    op: 'create', indicator_id: id, code: 'C1', text: 'بند اختباري', weight: '1',
+  });
+  assert.equal(item.status, 302);
+  const page = await (await fetchAs(cookie, `/admin/metric/indicator/${id}`)).text();
+  assert.match(page, /بند اختباري/);
+
+  // مؤشر قِيس (له مهام في البرامج القائمة) لا يُحذف
+  await postAs(cookie, '/admin/metric/indicator', { op: 'delete', id: '1' });
+  const metric = await (await fetchAs(cookie, '/admin/metric')).text();
+  assert.match(metric, /I-1\.1\.1/, 'المؤشر المقيس لم يُحذف');
+
+  // والمؤشر الذي لم يُقس يُحذف
+  const del = await postAs(cookie, '/admin/metric/indicator', { op: 'delete', id });
+  assert.equal(del.status, 302);
+  const after = await (await fetchAs(cookie, `/admin/metric/indicator/${id}`)).status;
+  assert.equal(after, 404, 'المؤشر غير المقيس حُذف');
+});
+
+test('BR-12: لا يُربط سؤال استبانة بمؤشر ليست أداته استبانة', async () => {
+  const cookie = await login('admin');
+  const checklistInd = 1;   // I-1.1.1 قائمة تحقق
+  await postAs(cookie, '/admin/metric/question', {
+    op: 'create', indicator_id: String(checklistInd), code: 'Q-BAD', text: 'سؤال ممنوع', point: 'end',
+  });
+  const page = await (await fetchAs(cookie, `/admin/metric/indicator/${checklistInd}`)).text();
+  assert.doesNotMatch(page, /سؤال ممنوع/, 'رُفض ربط السؤال بمؤشر قائمة تحقق');
+});
+
+test('الإعدادات المحفوظة يقرأها النظام فعلًا', async () => {
+  const cookie = await login('admin');
+  const res = await postAs(cookie, '/admin/settings', {
+    org_name: 'جمعية الاختبار',
+    min_response_rate: '85',
+    default_sla_days: '9',
+  });
+  assert.equal(res.status, 302);
+
+  // اسم الجمعية يظهر في الترويسة
+  const app = await (await fetchAs(cookie, '/app')).text();
+  assert.match(app, /جمعية الاختبار/, 'اسم الجمعية سرى على الواجهة');
+
+  // ومدة الشكوى صارت القيمة الافتراضية في نموذج الشكوى
+  const complaints = await (await fetchAs(cookie, '/programs/1/complaints')).text();
+  assert.match(complaints, /name="sla_days" value="9"/, 'مدة المعالجة سرت على النموذج');
+
+  // إعادة القيم حتى لا تؤثر في بقية الاختبارات
+  await postAs(cookie, '/admin/settings', {
+    org_name: 'جمعية تحصيل المعرفة', min_response_rate: '70', default_sla_days: '5',
+  });
+});

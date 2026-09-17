@@ -1,9 +1,12 @@
 import { esc } from '../lib/util.js';
 import { roleName } from '../lib/roles.js';
 import { icon, logoMark } from './icons.js';
+import { setting } from '../lib/settings.js';
 
-const ORG = 'جمعية تحصيل المعرفة';
 const APP = 'منصة التخطيط والجودة العلمية';
+
+/** اسم الجمعية من الإعدادات — يُقرأ عند كل صفحة فيسري تعديله فورًا. */
+const org = () => setting('org_name');
 
 const NAV = [
   ['/app', 'لوحتي', 'home'],
@@ -13,9 +16,7 @@ const NAV = [
 ];
 
 const ADMIN_NAV = [
-  ['/admin/metric', 'إدارة المقياس', 'metric'],
-  ['/admin/users', 'المستخدمون', 'users'],
-  ['/admin/audit', 'سجل التدقيق', 'audit'],
+  ['/admin', 'الإدارة', 'shield'],
 ];
 
 /** ترويسة HTML المشتركة (خطوط + أيقونة التبويب). */
@@ -46,7 +47,7 @@ ${user ? `
   <div class="topbar-in">
     <a class="brand" href="/app">
       ${logoMark(36)}
-      <span class="brand-text"><strong>${esc(APP)}</strong><small>${esc(ORG)}</small></span>
+      <span class="brand-text"><strong>${esc(APP)}</strong><small>${esc(org())}</small></span>
     </a>
     <button class="navtoggle" type="button" aria-label="القائمة" aria-expanded="false" data-nav-toggle>
       ${icon('menu', { size: 20 })}
@@ -71,7 +72,7 @@ ${flash ? `<div class="flash ${esc(flash.type || 'info')}">${icon(flash.type ===
 ${body}
 </main>
 <footer class="foot"><div class="foot-in">
-  <span>${esc(APP)} — ${esc(ORG)} · مقياس تشغيلي من 300 درجة</span>
+  <span>${esc(APP)} — ${esc(org())} · مقياس تشغيلي من 300 درجة</span>
   <span>«المستخدم لا يبحث عما يجب عليه فعله؛ النظام يعرض له واجباته».</span>
 </div></footer>
 <script src="/app.js" defer></script>
@@ -108,7 +109,7 @@ export function publicPage({ title, body, active = '', user = null }) {
   <div class="topbar-in">
     <a class="brand" href="/">
       ${logoMark(36)}
-      <span class="brand-text"><strong>${esc(ORG)}</strong><small>${esc(APP)}</small></span>
+      <span class="brand-text"><strong>${esc(org())}</strong><small>${esc(APP)}</small></span>
     </a>
     <button class="navtoggle" type="button" aria-label="القائمة" aria-expanded="false" data-nav-toggle>
       ${icon('menu', { size: 20 })}
@@ -128,7 +129,7 @@ ${body}
 <footer class="pubfoot">
   <div class="pubfoot-in">
     <div>
-      <h4>${esc(ORG)}</h4>
+      <h4>${esc(org())}</h4>
       <p style="font-size:.84rem;opacity:.85;max-width:38ch">
         جمعية أهلية مرخّصة تُعنى ببرامج تحصيل المعرفة وتطبق مقياس جودة تعليمية تشغيليًا من 300 درجة
         على كل برنامج، بقياس موثّق وشواهد ومراجعة مستقلة.
@@ -145,7 +146,7 @@ ${body}
       <a href="/reports-public">مؤشرات الجودة المعلنة</a>
     </div>
   </div>
-  <div class="copy">© ${new Date().getFullYear()} ${esc(ORG)} — جميع الحقوق محفوظة</div>
+  <div class="copy">© ${new Date().getFullYear()} ${esc(org())} — جميع الحقوق محفوظة</div>
 </footer>
 <script src="/app.js" defer></script>
 </body>

@@ -30,6 +30,34 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
   user_agent TEXT
 );
 
+-- ------------------------------ الأدوار والمناصب ---------------------
+-- الأدوار في قاعدة البيانات لا في الكود: يضيف المدير منصبًا ويعدّل صلاحياته
+-- دون تعديل برمجي. أدوار الوثيقة الأصلية موسومة is_system: تُعدَّل ولا تُحذف.
+
+CREATE TABLE IF NOT EXISTS roles (
+  key         TEXT PRIMARY KEY,          -- معرّف إنجليزي ثابت
+  name        TEXT NOT NULL,             -- الاسم المعروض (المنصب)
+  description TEXT,
+  is_system   INTEGER NOT NULL DEFAULT 0,
+  is_active   INTEGER NOT NULL DEFAULT 1,
+  sort        INTEGER NOT NULL DEFAULT 0,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS role_permissions (
+  role_key TEXT NOT NULL REFERENCES roles(key) ON DELETE CASCADE,
+  perm     TEXT NOT NULL,
+  PRIMARY KEY (role_key, perm)
+);
+
+-- مسؤوليات الدور كما تُعرض للمستخدم في لوحته
+CREATE TABLE IF NOT EXISTS role_duties (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  role_key TEXT NOT NULL REFERENCES roles(key) ON DELETE CASCADE,
+  text     TEXT NOT NULL,
+  sort     INTEGER NOT NULL DEFAULT 0
+);
+
 -- ------------------------------ البرامج والبنية التشغيلية -----------
 
 CREATE TABLE IF NOT EXISTS venues (
@@ -163,6 +191,7 @@ CREATE TABLE IF NOT EXISTS checklist_items (
   text         TEXT NOT NULL,
   weight       REAL NOT NULL DEFAULT 1,
   sort         INTEGER NOT NULL DEFAULT 0,
+  is_active    INTEGER NOT NULL DEFAULT 1,  -- البند المعطّل لا يظهر في التحقق الجديد وتبقى سجلاته
   UNIQUE (indicator_id, code)
 );
 

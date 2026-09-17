@@ -7,7 +7,7 @@ import {
 import { icon } from '../views/icons.js';
 import { programDiagnostics, healthLabel } from '../lib/insights.js';
 import { programBenchmark } from '../lib/benchmark.js';
-import { ROLES, ROLE_KEYS, roleName, can } from '../lib/roles.js';
+import { activeRoles, roleKeys, roleName, can } from '../lib/roles.js';
 import { programsForUser } from '../lib/auth.js';
 import { computeProgram, missingMeasurements, notMetItems } from '../lib/scoring.js';
 import { syncProgramTasks, closureReadiness, refreshNotifications } from '../lib/scheduler.js';
@@ -606,14 +606,14 @@ export default function register(router) {
         <form method="post" action="/programs/${program.id}/team">
           <div class="form-grid">
             ${field('المستخدم', select('user_id', users.map((u) => ({ value: u.id, label: `${u.full_name} (${u.username})` })), '', { required: true, placeholder: 'اختر المستخدم' }))}
-            ${field('الدور', select('role', ROLE_KEYS.map((k) => ({ value: k, label: ROLES[k].name })), '', { required: true, placeholder: 'اختر الدور' }))}
+            ${field('الدور', select('role', activeRoles().map((r) => ({ value: r.key, label: r.name })), '', { required: true, placeholder: 'اختر الدور' }))}
           </div>
           <button class="btn">إسناد</button>
         </form>
         <p class="hint">عند الإسناد تُحوَّل المهام المعلّقة الخاصة بالدور تلقائيًا إلى المستخدم الجديد.</p>`) : ''}
-      ${section('مسؤوليات الأدوار وفق الوثيقة', `<div class="grid two">${ROLE_KEYS.map((k) => `
-        <div><h3>${esc(ROLES[k].name)}</h3>
-        <ul class="duties">${ROLES[k].duties.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>`).join('')}</div>`)}`,
+      ${section('مسؤوليات الأدوار', `<div class="grid two">${activeRoles().map((r) => `
+        <div><h3>${esc(r.name)}</h3>
+        <ul class="duties">${r.duties.map((d) => `<li>${esc(d)}</li>`).join('')}</ul></div>`).join('')}</div>`)}`,
     { active: '/programs' });
   });
 
@@ -622,7 +622,7 @@ export default function register(router) {
     const { program } = loaded;
     const userId = int(ctx.body.user_id, 0);
     const role = String(ctx.body.role || '');
-    if (!userId || !ROLE_KEYS.includes(role)) return ctx.redirect(`/programs/${program.id}/team`, 'بيانات الإسناد غير مكتملة.', 'err');
+    if (!userId || !roleKeys().includes(role)) return ctx.redirect(`/programs/${program.id}/team`, 'بيانات الإسناد غير مكتملة.', 'err');
     run('INSERT OR IGNORE INTO program_assignments (program_id, user_id, role) VALUES (?, ?, ?)', program.id, userId, role);
     syncProgramTasks(program.id);
     // إعادة إسناد المهام المعلّقة لهذا الدور
