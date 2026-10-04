@@ -269,7 +269,13 @@ if (isMain) {
   const total = get('SELECT SUM(weight) s FROM indicators WHERE is_active = 1').s;
   console.log('تمت التهيئة بنجاح:', counts);
   console.log(`إجمالي أوزان المؤشرات = ${total} درجة`);
-  console.log(`كلمة المرور الافتراضية لكل الحسابات: ${DEFAULT_PASSWORD}`);
+  // لا تُطبع كلمة المرور عند تمريرها من البيئة: سجلّات الاستضافة تُحفظ وتُقرأ،
+  // فطباعتها هناك تسريب. وتُطبع الافتراضية المعلومة أصلًا لتسهيل التشغيل المحلي.
+  if (process.env.TPQ_SEED_PASSWORD) {
+    console.log('كلمة المرور الأولى مأخوذة من متغير البيئة TPQ_SEED_PASSWORD.');
+  } else {
+    console.log(`كلمة المرور الافتراضية لكل الحسابات: ${DEFAULT_PASSWORD}`);
+  }
 }
 
 export { DEFAULT_PASSWORD };

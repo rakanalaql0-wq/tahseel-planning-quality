@@ -1,0 +1,38 @@
+# نشر المنصة على Render — يُقرأ تلقائيًا عند ربط المستودع
+# https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: tahseel-planning-quality
+    runtime: node
+    plan: free
+    region: frankfurt          # أقرب مراكز Render إلى السعودية
+    branch: claude/platform-planning-quality-hl955j
+    buildCommand: "echo 'لا توجد تبعيات للتثبيت'"
+    startCommand: "npm start"
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "22.5.0"
+
+      # كلمة مرور الحسابات الأولى — تُولَّد عشوائية عند أول نشر.
+      # اقرأها من لوحة Render (Environment) ثم غيّرها من داخل المنصة.
+      - key: TPQ_SEED_PASSWORD
+        generateValue: true
+
+      # 1 = بيانات العرض التجريبي (برنامج وطلاب وهميون) — للتجربة والعرض.
+      # اجعلها 0 قبل إدخال أي بيانات حقيقية.
+      - key: TPQ_DEMO
+        value: "1"
+
+      # مسار قاعدة البيانات. مع الخطة المجانية لا يوجد قرص دائم،
+      # فتُحفظ في مجلد مؤقت وتُعاد تهيئتها عند كل إعادة تشغيل.
+      # عند الترقية إلى خطة بقرص: أزِل التعليق عن كتلة disk أدناه،
+      # واجعل القيمة /var/data/tpq.db
+      - key: TPQ_DB
+        value: /tmp/tpq.db
+
+    # قرص دائم — يتطلب خطة مدفوعة. بدونه تضيع البيانات عند كل إعادة تشغيل.
+    # disk:
+    #   name: tpq-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
