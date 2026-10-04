@@ -157,6 +157,73 @@ export default function register(router) {
         <p class="hint">تُضبط خطة العينة وبنود التحقق من صفحة المؤشر بعد إنشائه.</p>
       </form>`;
 
+    /**
+     * بطاقة المؤشر: تعريفه، وتعديل سريع لوزنه ومالكه،
+     * ومحتوى أداته (بنود التحقق أو أسئلة الاستبانة أو قاعدة الحساب) أمامه
+     * مباشرة — فلا يحتاج مدير الجودة إلى فتح صفحة لكل مؤشر ليقرأ ما يُسأل عنه.
+     */
+    function indicatorCard(i) {
+      const items = i.tool === 'checklist'
+        ? all('SELECT * FROM checklist_items WHERE indicator_id = ? ORDER BY sort, id', i.id) : [];
+      const qs = i.tool === 'survey'
+        ? all('SELECT * FROM question_bank WHERE indicator_id = ? ORDER BY sort, id', i.id) : [];
+
+      let content;
+      let contentLabel;
+      if (i.tool === 'checklist') {
+        contentLabel = `نموذج التحقق — ${items.length} بندًا`;
+        content = items.length
+          ? `<ol class="form-preview">${items.map((it) => `<li${it.is_active ? '' : ' class="off"'}>
+              <span>${esc(it.text)}</span>
+              <small><code>${esc(it.code)}</code> · وزن نسبي ${fmtNum(it.weight)}${it.is_active ? '' : ' · معطّل'}</small>
+            </li>`).join('')}</ol>
+            <p class="hint">النتيجة = مجموع (حالة البند × وزنه النسبي) ÷ مجموع الأوزان.
+              متحقق 100% · جزئي 50% · غير متحقق 0% — والملاحظة إلزامية عند الأخيرين.</p>`
+          : '<p class="hint">لا بنود بعد — تُضاف من صفحة المؤشر.</p>';
+      } else if (i.tool === 'survey') {
+        contentLabel = `محتوى الاستبانة — ${qs.length} سؤالًا`;
+        content = qs.length
+          ? `<ol class="form-preview">${qs.map((q) => `<li>
+              <span>${esc(q.text)}</span>
+              <small><code>${esc(q.code)}</code> · ${esc(POINTS.find((p) => p.value === q.point)?.label || q.point)}</small>
+            </li>`).join('')}</ol>
+            <p class="hint">تُعرض على الطالب بمقياس ليكرت من خمس درجات.
+              النتيجة = (متوسط الإجابات − 1) ÷ 4 × 100.</p>`
+          : '<p class="hint">لا أسئلة مرتبطة بهذا المؤشر بعد.</p>';
+      } else {
+        contentLabel = 'قاعدة الحساب التشغيلية';
+        content = `<p><strong>${esc(RULE_LABEL[i.record_rule] || 'بلا قاعدة — لن يُحتسب')}</strong></p>
+          <p class="hint">لا إدخال يدوي: يقرأ النظام سجلاته (الحضور أو الشكاوى أو الطلاب)
+            ويحسب النسبة بنفسه.</p>`;
+      }
+
+      return `<article class="ind-card${i.is_active ? '' : ' off'}">
+        <div class="ind-head">
+          <div class="ind-id">
+            <a href="/admin/metric/indicator/${i.id}"><code>${esc(i.code)}</code> ${esc(i.name)}</a>
+            ${i.is_active ? '' : badge('معطّل', 'muted')}
+            <small class="muted">${esc(TOOL_LABEL[i.tool] || i.tool)} ·
+              ${esc(roleName(i.owner_role))} · ${esc(samplePlanLabel(i))}</small>
+          </div>
+          <div class="ind-weight"><span class="num">${fmtNum(i.weight)}</span><small>درجة</small></div>
+        </div>
+
+        <div class="ind-tools">
+          <form method="post" action="/admin/metric/indicator" class="quick-weight">
+            ${hidden('op', 'update')}${hidden('id', i.id)}${hidden('only', 'quick')}
+            <label>الوزن</label>
+            ${input('weight', { type: 'number', value: i.weight, attrs: 'step="0.5" min="0" max="300"' })}
+            <label>مالك المؤشر</label>
+            ${select('owner_role', activeRoles().map((r) => ({ value: r.key, label: r.name })), i.owner_role)}
+            <button class="btn small">حفظ</button>
+          </form>
+          <a class="btn sec small" href="/admin/metric/indicator/${i.id}">${icon('plan', { size: 13 })} تفصيل كامل</a>
+        </div>
+
+        ${editBox(contentLabel, content)}
+      </article>`;
+    }
+
     const tree = sections.map((s) => {
       const sAxes = axes.filter((a) => a.section_id === s.id);
       const sWeight = sAxes.reduce((acc, a) => acc + axisWeight(a.id), 0);
@@ -196,17 +263,8 @@ export default function register(router) {
             </div>
             ${editBox('تعديل المحور', axisForm(s.id, a))}
 
-            ${aInds.length ? `<div class="table-wrap"><table class="compact">
-              <thead><tr><th>المؤشر</th><th>الأداة</th><th>مالك المؤشر</th><th>خطة العينة</th><th>الوزن</th><th></th></tr></thead>
-              <tbody>${aInds.map((i) => `<tr${i.is_active ? '' : ' class="exempt-row"'}>
-                <td><a href="/admin/metric/indicator/${i.id}"><code>${esc(i.code)}</code> ${esc(i.name)}</a>
-                  ${i.is_active ? '' : badge('معطّل', 'muted')}</td>
-                <td>${esc(TOOL_LABEL[i.tool] || i.tool)}</td>
-                <td>${esc(roleName(i.owner_role))}</td>
-                <td><small>${esc(samplePlanLabel(i))}</small></td>
-                <td class="num">${fmtNum(i.weight)}</td>
-                <td><a class="btn sec small" href="/admin/metric/indicator/${i.id}">تفصيل</a></td>
-              </tr>`).join('')}</tbody></table></div>` : '<p class="hint">لا مؤشرات في هذا المحور بعد.</p>'}
+            ${aInds.length ? aInds.map(indicatorCard).join('')
+      : '<p class="hint">لا مؤشرات في هذا المحور بعد.</p>'}
             ${editBox('إضافة مؤشر', indicatorForm(a.id))}
           </div>`;
   }).join('')}
@@ -239,6 +297,47 @@ export default function register(router) {
       <div class="flash info">${icon('info', { size: 17 })}<span>
         تعديل الأوزان يعيد احتساب درجات <strong>البرامج القائمة</strong> فقط.
         البرامج المغلقة محفوظة بدرجتها النهائية ولا تتأثر.</span></div>
+
+      ${section('الملخص الإجمالي', `<div class="table-wrap"><table class="compact">
+        <thead><tr>
+          <th>القسم</th><th>المحاور</th><th>المؤشرات</th>
+          <th>قوائم تحقق</th><th>استبانات</th><th>سجلات</th>
+          <th>بنود التحقق</th><th>أسئلة الاستبانات</th>
+          <th>الوزن</th><th>النسبة</th>
+        </tr></thead>
+        <tbody>${sections.map((s) => {
+    const sAxes = axes.filter((a) => a.section_id === s.id);
+    const si = indicators.filter((i) => i.is_active && sAxes.some((a) => a.id === i.axis_id));
+    const w = si.reduce((acc, i) => acc + Number(i.weight), 0);
+    const nTool = (t) => si.filter((i) => i.tool === t).length;
+    const nItems = si.reduce((acc, i) => acc + Number(get(
+      'SELECT COUNT(*) c FROM checklist_items WHERE indicator_id = ? AND is_active = 1', i.id,
+    )?.c || 0), 0);
+    const nQs = si.reduce((acc, i) => acc + Number(get(
+      'SELECT COUNT(*) c FROM question_bank WHERE indicator_id = ?', i.id,
+    )?.c || 0), 0);
+    return `<tr>
+            <td><strong>${esc(s.name)}</strong></td>
+            <td class="num">${sAxes.length}</td><td class="num">${si.length}</td>
+            <td class="num">${nTool('checklist')}</td><td class="num">${nTool('survey')}</td><td class="num">${nTool('record')}</td>
+            <td class="num">${nItems}</td><td class="num">${nQs}</td>
+            <td class="num"><strong>${fmtNum(w)}</strong></td>
+            <td class="num">${totalWeight ? fmtNum((w / totalWeight) * 100, 0) : 0}%</td>
+          </tr>`;
+  }).join('')}
+          <tr class="section-row">
+            <td><strong>الإجمالي</strong></td>
+            <td class="num">${axes.length}</td>
+            <td class="num">${indicators.filter((i) => i.is_active).length}</td>
+            <td class="num">${indicators.filter((i) => i.is_active && i.tool === 'checklist').length}</td>
+            <td class="num">${indicators.filter((i) => i.is_active && i.tool === 'survey').length}</td>
+            <td class="num">${indicators.filter((i) => i.is_active && i.tool === 'record').length}</td>
+            <td class="num">${Number(get('SELECT COUNT(*) c FROM checklist_items WHERE is_active = 1')?.c || 0)}</td>
+            <td class="num">${Number(get('SELECT COUNT(*) c FROM question_bank WHERE indicator_id IS NOT NULL')?.c || 0)}</td>
+            <td class="num"><strong>${fmtNum(totalWeight)}</strong></td>
+            <td class="num">100%</td>
+          </tr>
+        </tbody></table></div>`, { ico: 'reports' })}
 
       ${section('شجرة المقياس', tree || emptyState('لا توجد أقسام بعد — ابدأ بإضافة قسم.', 'layers'), {
     actions: `<form method="post" action="/admin/metric/resync" class="inline">
@@ -534,6 +633,20 @@ export default function register(router) {
     const ind = get('SELECT * FROM indicators WHERE id = ?', ctx.body.id);
     if (!ind) return ctx.notFound();
     const back = `/admin/metric/indicator/${ind.id}`;
+
+    // حفظ سريع من بطاقة المؤشر في الشجرة: الوزن والمالك فقط،
+    // فالنموذج المختصر لا يرسل بقية الحقول ولا يصح أن تُمحى لغيابها.
+    if (ctx.body.only === 'quick') {
+      const w = Math.max(0, Math.min(300, num(ctx.body.weight, ind.weight)));
+      const o = roleKeys().includes(ctx.body.owner_role) ? ctx.body.owner_role : ind.owner_role;
+      run('UPDATE indicators SET weight = ?, owner_role = ? WHERE id = ?', w, o, ind.id);
+      audit({
+        user: ctx.user, action: 'metric.indicator.update', entityType: 'indicator', entityId: ind.id,
+        before: { weight: ind.weight, owner_role: ind.owner_role },
+        after: { weight: w, owner_role: o }, ip: ctx.ip,
+      });
+      return ctx.redirect('/admin/metric', `حُدّث «${ind.name}»: الوزن ${fmtNum(w)} درجة.`);
+    }
 
     // حفظ حقل واحد فقط (نموذج قاعدة الحساب)
     if (ctx.body.only === 'record_rule') {

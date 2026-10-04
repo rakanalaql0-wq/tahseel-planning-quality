@@ -886,3 +886,50 @@ test('صفحة النظام لا تعرض أي بيانات شخصية', async (
     assert.ok(!body.includes(name), `اسم شخصي ظاهر في صفحة عامة: ${name}`);
   }
 });
+
+// --------------------- شاشة المؤشرات لمدير التخطيط والجودة ---------------------
+
+test('مدير التخطيط والجودة يرى المؤشرات تفصيلًا وإجمالًا ومحتوى أدواتها أمامه', async () => {
+  const cookie = await login('manager');
+  const body = await (await fetchAs(cookie, '/admin/metric')).text();
+
+  // الملخص الإجمالي
+  assert.match(body, /الملخص الإجمالي/);
+  assert.match(body, /بنود التحقق/);
+  assert.match(body, /أسئلة الاستبانات/);
+
+  // التفصيل: بطاقة لكل مؤشر مفعّل
+  const cards = body.match(/class="ind-card/g) || [];
+  assert.ok(cards.length >= 24, `عدد بطاقات المؤشرات ${cards.length} أقل من المتوقع`);
+
+  // محتوى الأدوات معروض أمام المؤشرات لا خلف رابط
+  assert.match(body, /نموذج التحقق — \d+ بندًا/, 'بنود التحقق معروضة');
+  assert.match(body, /محتوى الاستبانة — \d+ سؤالًا/, 'أسئلة الاستبانة معروضة');
+  assert.match(body, /قاعدة الحساب التشغيلية/, 'قاعدة السجل التشغيلي معروضة');
+
+  // نص بند تحقق حقيقي ظاهر في الصفحة نفسها
+  assert.match(body, /class="form-preview"/, 'معاينة النموذج');
+
+  // وتعديل الوزن متاح مباشرة
+  assert.match(body, /class="quick-weight"/, 'تعديل سريع للوزن');
+});
+
+test('الحفظ السريع للوزن لا يمحو بقية تعريف المؤشر', async () => {
+  const cookie = await login('manager');
+  const before = await (await fetchAs(cookie, '/admin/metric/indicator/3')).text();
+  const items = (before.match(/class="editbox"/g) || []).length;
+
+  const res = await postAs(cookie, '/admin/metric/indicator', {
+    op: 'update', id: '3', only: 'quick', weight: '11', owner_role: 'program_officer',
+  });
+  assert.equal(res.status, 302);
+
+  const after = await (await fetchAs(cookie, '/admin/metric/indicator/3')).text();
+  assert.match(after, /value="11"/, 'الوزن الجديد محفوظ');
+  assert.equal((after.match(/class="editbox"/g) || []).length, items, 'بنود المؤشر لم تُمس');
+  assert.doesNotMatch(after, /خطة العينة غير محددة/);
+
+  // ولم تُفقد الدورية: الصفحة ما زالت تعرض خطة عينة مفهومة
+  assert.match(after, /مرة واحدة|مرتان|عينة لا تقل|مرات على الأقل|سجل تشغيلي|بعد كل نشاط/,
+    'الدورية باقية بعد الحفظ السريع');
+});
