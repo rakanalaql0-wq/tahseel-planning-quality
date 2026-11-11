@@ -80,64 +80,111 @@ def write(ws, r, values, *, fill=None, bold=False):
     return r + 1
 
 
-# ============================== 1) الملخص الإجمالي ==============================
+# ============================== 1) البنية الكاملة ==============================
+# ثلاثة مستويات في جدول واحد. كل مؤشر يُسهم بواحد في عمود أداته، فتُجمع
+# أعمدة الأدوات صعودًا إلى المحور ثم القسم ثم الإجمالي بمعادلات لا بأرقام
+# مكتوبة — فأي تعديل على وزن أو أداة ينعكس على كل المستويات.
 total_w = sum(i["weight"] for i in inds)
 
-
-def n_tool(sec, key):
-    return sum(1 for i in inds if i["section"] == sec and i["tool_key"] == key)
-
-
-def n_items(sec):
-    return sum(1 for c in items if c["section"] == sec and c["active"] == "مفعّل")
-
-
-def n_qs(sec):
-    return sum(1 for q in questions if q["section"] == sec)
-
-
 ws, r = sheet(
-    "الملخص",
-    "الملخص الإجمالي لبنية المقياس",
-    "ما تعرضه شاشة «بنية المقياس» في المنصة — مستخرج من البنية المعتمدة في قاعدة البيانات",
-    ["القسم", "المحاور", "المؤشرات", "قوائم تحقق", "استبانات", "سجلات تشغيلية",
-     "بنود التحقق", "أسئلة الاستبانات", "الوزن", "النسبة من المقياس"],
-    [30, 10, 11, 12, 11, 15, 12, 15, 10, 16],
+    "البنية الكاملة",
+    "بنية المقياس كاملة: الأقسام والمحاور والمؤشرات",
+    "كل مؤشر يُسهم بواحد في عمود أداته · صفوف الأقسام والمحاور مجاميع محسوبة من مؤشراتها",
+    ["المستوى", "الرمز", "الاسم", "المحاور", "المؤشرات",
+     "قوائم تحقق", "استبانات", "سجلات", "بنود التحقق", "أسئلة الاستبانات",
+     "مالك المؤشر", "خطة العينة", "الوزن", "النسبة"],
+    [9, 12, 38, 9, 10, 11, 10, 9, 12, 15, 26, 30, 9, 9],
 )
-first = r
-for s in secs:
-    r = write(ws, r, [
-        s["name"], s["axes"], s["indicators"],
-        n_tool(s["name"], "checklist"), n_tool(s["name"], "survey"), n_tool(s["name"], "record"),
-        n_items(s["name"]), n_qs(s["name"]), s["computed"],
-    ])
+
+SUMCOLS = [5, 6, 7, 8, 9, 10, 13]          # المؤشرات والأدوات والمحتوى والوزن
+ind_rows = []                               # صفوف المؤشرات، لصف الإجمالي
+
+for s_ in secs:
+    sec_row = r
+    r = write(ws, r, ["قسم", s_["code"], s_["name"]], fill=sec_fill, bold=True)
+    sec_first = r
+
+    for a in [x for x in axesList if x["section"] == s_["name"]]:
+        ax_row = r
+        r = write(ws, r, ["محور", a["code"], a["name"]], fill=alt_fill)
+        ax_first = r
+
+        for i in [y for y in inds if y["axis_code"] == a["code"]]:
+            ind_rows.append(r)
+            r = write(ws, r, [
+                "مؤشر", i["code"], i["name"], "", "",
+                1 if i["tool_key"] == "checklist" else 0,
+                1 if i["tool_key"] == "survey" else 0,
+                1 if i["tool_key"] == "record" else 0,
+                i["items"], i["questions"],
+                i["owner"], i["plan"], i["weight"],
+            ])
+        ax_last = r - 1
+
+        # المحور = مجموع مؤشراته
+        ws.cell(row=ax_row, column=5,
+                value=f'=COUNTIFS($A${ax_first}:$A${ax_last},"مؤشر")').fill = alt_fill
+        for col in [6, 7, 8, 9, 10, 13]:
+            L = get_column_letter(col)
+            c = ws.cell(row=ax_row, column=col, value=f"=SUM({L}{ax_first}:{L}{ax_last})")
+            c.fill = alt_fill
+        for col in SUMCOLS:
+            c = ws.cell(row=ax_row, column=col)
+            c.font = cell_f
+            c.alignment = center
+            c.border = box
+
+    sec_last = r - 1
+
+    # القسم = مجموع مؤشرات محاوره، وعدد محاوره عدّ صفوف «محور».
+    # يُجمع بـ SUMIFS على عمود المستوى لا بجمع المدى: المدى يضم صفوف
+    # المحاور وهي نفسها مجاميع، فجمعه يحتسب كل قيمة مرتين.
+    ws.cell(row=sec_row, column=4, value=f'=COUNTIFS($A${sec_first}:$A${sec_last},"محور")')
+    ws.cell(row=sec_row, column=5, value=f'=COUNTIFS($A${sec_first}:$A${sec_last},"مؤشر")')
+    for col in [6, 7, 8, 9, 10, 13]:
+        L = get_column_letter(col)
+        ws.cell(row=sec_row, column=col,
+                value=f'=SUMIFS({L}{sec_first}:{L}{sec_last},$A${sec_first}:$A${sec_last},"مؤشر")')
+    for col in [4] + SUMCOLS:
+        c = ws.cell(row=sec_row, column=col)
+        c.font = bold_f
+        c.alignment = center
+        c.fill = sec_fill
+        c.border = box
 
 last = r - 1
-r = write(ws, r, ["الإجمالي"], fill=sec_fill, bold=True)
+r = write(ws, r, ["الإجمالي"], fill=gold_fill, bold=True)
 tot = r - 1
-for col in range(2, 10):
+ws.cell(row=tot, column=4, value=f'=COUNTIFS($A$4:$A${last},"محور")')
+ws.cell(row=tot, column=5, value=f'=COUNTIFS($A$4:$A${last},"مؤشر")')
+for col in [6, 7, 8, 9, 10, 13]:
     L = get_column_letter(col)
-    c = ws.cell(row=tot, column=col, value=f"=SUM({L}{first}:{L}{last})")
+    ws.cell(row=tot, column=col,
+            value=f'=SUMIFS({L}4:{L}{last},$A$4:$A${last},"مؤشر")')
+for col in [4] + SUMCOLS:
+    c = ws.cell(row=tot, column=col)
     c.font = bold_f
     c.alignment = center
-    c.fill = sec_fill
+    c.fill = gold_fill
     c.border = box
-c = ws.cell(row=tot, column=10, value="=IF($I$%d=0,0,1)" % tot)
-c.font = bold_f
-c.alignment = center
-c.number_format = "0%"
-c.fill = sec_fill
-c.border = box
+for col in (1, 2, 3, 11, 12, 14):
+    ws.cell(row=tot, column=col).fill = gold_fill
+    ws.cell(row=tot, column=col).border = box
 
-# نسبة كل قسم من الإجمالي — تُكتب بعد معرفة صف الإجمالي ليشير إليه
-for rr in range(first, last + 1):
-    c = ws.cell(row=rr, column=10, value=f"=IF($I${tot}=0,0,I{rr}/$I${tot})")
-    c.number_format = "0%"
+# النسبة لكل صف من إجمالي المقياس
+for rr in list(range(4, last + 1)) + [tot]:
+    c = ws.cell(row=rr, column=14, value=f"=IF($M${tot}=0,0,M{rr}/$M${tot})")
+    c.number_format = "0.0%"
     c.alignment = center
     c.border = box
+    if rr == tot:
+        c.font = bold_f
+        c.fill = gold_fill
 
+ws.auto_filter.ref = f"A3:N{last}"
 ws.cell(row=tot + 2, column=1,
-        value="الوزن الكامل للمقياس 300 درجة (BR-01). أي اختلاف في صف الإجمالي يعني خللًا في الأوزان.").font = small_f
+        value="صفوف الأقسام والمحاور مجاميع محسوبة من مؤشراتها — لا تُكتب يدويًا. "
+              "والوزن الكامل 300 درجة (BR-01).").font = small_f
 ws.cell(row=tot + 2, column=1).alignment = right
 
 # ============================== 2) شجرة المقياس ==============================
